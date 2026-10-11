@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 16 章 · 速查手册 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="16">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 16 章 · 速查</span>
+<h1>速查手册</h1>
+<p class="lede">
+  读完之后回来查的一页。没有新内容：把前面各章的结论压成几张决策图和几张表，每一条都标了出处，想看理由就点回去。
+</p>
+
+<div id="chapter-toc"></div>
+
+<div class="box note">
+  <div class="t">&#9432; 怎么用</div>
+  <p>
+    写代码时最常遇到的是这三个问题：<a href="#which-test">这段代码该写哪种测试</a>、<a href="#mock">这个依赖要不要换掉</a>、
+    <a href="#write">这个测试写得行不行</a>。遇到具体的麻烦，直接跳到<a href="#symptoms">「遇到问题查哪里」</a>。
+    第 1–11 章的结论来自原书；第 0、12–15 章是本教程的补充。
+  </p>
+</div>
+
+<h2 id="which-test">这段代码该写哪种测试</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 360" role="img" aria-label="四象限决策图。纵轴是复杂度或业务重要性，横轴是协作者数量。左上：领域模型和算法，复杂且协作者少，重点写单元测试。左下：琐碎代码，不测。右下：控制器，协作者多但逻辑少，写少量集成测试。右上：过度复杂的代码，既有逻辑又有很多协作者，不要直接测，先拆成领域模型和控制器">
+  <path class="ln" d="M120 20 V310 H730" marker-start="url(#ar)" marker-end="url(#ar)"/>
+  <text class="sm" x="60" y="150" text-anchor="middle">复杂度 /</text>
+  <text class="sm" x="60" y="168" text-anchor="middle">业务重要性</text>
+  <text class="sm" x="425" y="340" text-anchor="middle">协作者的数量（尤其是进程外依赖）&rarr;</text>
+
+  <rect class="bx-g" x="134" y="30" width="286" height="128" rx="12"/>
+  <text class="ttl on-g" x="150" y="56">领域模型 · 算法</text>
+  <text class="sm" x="150" y="78">逻辑多，协作者少</text>
+  <text class="lbl on-g" x="150" y="106"><tspan font-weight="700">重点写单元测试</tspan></text>
+  <text class="sm" x="150" y="126">所有边界情况都在这里覆盖；不用 Mock</text>
+  <text class="sm" x="150" y="144">首选基于输出的风格</text>
+
+  <rect class="bx-r" x="430" y="30" width="286" height="128" rx="12"/>
+  <text class="ttl on-r" x="446" y="56">过度复杂的代码</text>
+  <text class="sm" x="446" y="78">逻辑多，协作者也多</text>
+  <text class="lbl on-r" x="446" y="106"><tspan font-weight="700">先别测，先拆</tspan></text>
+  <text class="sm" x="446" y="126">把决策抽到左边，把编排留在下面</text>
+  <text class="sm" x="446" y="144">已有的遗留代码：见第 12 章</text>
+  <path class="ln-r" d="M428 94 H424" marker-end="url(#ar-r)"/>
+  <path class="ln-r" d="M573 160 V168" marker-end="url(#ar-r)"/>
+
+  <rect class="bx-d" x="134" y="172" width="286" height="128" rx="12"/>
+  <text class="ttl" x="150" y="198">琐碎代码</text>
+  <text class="sm" x="150" y="220">逻辑少，协作者少</text>
+  <text class="lbl" x="150" y="248"><tspan font-weight="700">不测</tspan></text>
+  <text class="sm" x="150" y="268">构造函数、取值方法、一行的转发</text>
+  <text class="sm" x="150" y="286">会被别的测试顺带用到</text>
+
+  <rect class="bx-b" x="430" y="172" width="286" height="128" rx="12"/>
+  <text class="ttl on-b" x="446" y="198">控制器 · 应用服务</text>
+  <text class="sm" x="446" y="220">逻辑少，协作者多：只做编排</text>
+  <text class="lbl on-b" x="446" y="248"><tspan font-weight="700">少量集成测试</tspan></text>
+  <text class="sm" x="446" y="268">每个业务场景一条最长的成功路径，</text>
+  <text class="sm" x="446" y="286">加上单元测试覆盖不到的边界情况</text>
+</svg>
+<figcaption>图 16-1　四类代码，四种对待（<a href="ch07.html">第 7 章</a>）</figcaption>
+</figure>
+
+<div class="tw">
+<table>
+  <tr><th>测试类型</th><th>验证什么</th><th>数量</th><th>进程外依赖</th><th>出处</th></tr>
+  <tr><td>单元测试</td><td>一个行为单元；快；与其他测试相互隔离</td><td>最多</td><td>没有</td><td><a href="ch02.html">第 2 章</a></td></tr>
+  <tr><td>集成测试</td><td>系统和进程外依赖配合起来是否工作</td><td>每个业务场景一两个</td><td>受管依赖用真的；不受管依赖用替身</td><td><a href="ch08.html">第 8 章</a></td></tr>
+  <tr><td>端到端测试</td><td>从最终用户的角度，所有依赖都是真的</td><td>极少，只留最关键的路径</td><td>全部是真的</td><td><a href="ch04.html">第 4 章</a>、<a href="ch08.html">第 8 章</a></td></tr>
+</table>
+</div>
+
+<h2 id="mock">这个依赖要不要换成替身</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 400" role="img" aria-label="依赖是否替换的决策树。依赖在进程内吗？是：用真的对象，不替换。不是，是进程外依赖：只有你的应用能访问它吗？是，这是受管依赖，比如自己的数据库：在集成测试里用真的，不 Mock。不是，别的系统也能看到它，这是不受管依赖，比如消息总线、邮件服务、第三方接口：用替身，并且在系统的最边缘替换，验证发出去的消息和次数">
+  <rect class="bx-a" x="270" y="12" width="220" height="40" rx="10"/>
+  <text class="ttl on-a" x="380" y="37" text-anchor="middle">被测代码用到的一个依赖</text>
+  <path class="ln" d="M380 54 V72" marker-end="url(#ar)"/>
+
+  <rect class="bx" x="250" y="76" width="260" height="44" rx="10"/>
+  <text class="lbl" x="380" y="96" text-anchor="middle"><tspan font-weight="700">它在你的进程之外吗？</tspan></text>
+  <text class="sm" x="380" y="112" text-anchor="middle">数据库、消息队列、文件系统、别的服务……</text>
+
+  <path class="ln" d="M250 98 H130 V146" marker-end="url(#ar)"/>
+  <text class="sm" x="190" y="90" text-anchor="middle">不是：进程内</text>
+  <path class="ln" d="M510 98 H560 V146" marker-end="url(#ar)"/>
+  <text class="sm" x="548" y="90" text-anchor="middle">是</text>
+
+  <rect class="bx-g" x="20" y="150" width="220" height="92" rx="10"/>
+  <text class="ttl on-g" x="130" y="176" text-anchor="middle">用真的对象</text>
+  <text class="sm" x="130" y="198" text-anchor="middle">领域类之间的配合是实现细节，</text>
+  <text class="sm" x="130" y="214" text-anchor="middle">不 Mock、不验证调用</text>
+  <text class="sm on-g" x="130" y="232" text-anchor="middle">第 2、5 章</text>
+
+  <rect class="bx" x="420" y="150" width="280" height="44" rx="10"/>
+  <text class="lbl" x="560" y="170" text-anchor="middle"><tspan font-weight="700">只有你的应用能访问它吗？</tspan></text>
+  <text class="sm" x="560" y="186" text-anchor="middle">外部看不到你和它之间的交互</text>
+
+  <path class="ln" d="M470 196 V246" marker-end="url(#ar)"/>
+  <text class="sm" x="452" y="224" text-anchor="middle">是</text>
+  <path class="ln" d="M650 196 V246" marker-end="url(#ar)"/>
+  <text class="sm" x="668" y="224" text-anchor="middle">不是</text>
+
+  <rect class="bx-b" x="270" y="250" width="270" height="134" rx="10"/>
+  <text class="ttl on-b" x="405" y="276" text-anchor="middle">受管依赖：用真的</text>
+  <text class="sm" x="405" y="298" text-anchor="middle">典型：应用自己的数据库</text>
+  <text class="sm" x="405" y="320" text-anchor="middle">在集成测试里连真实的实例；</text>
+  <text class="sm" x="405" y="336" text-anchor="middle">不 Mock 仓储，不用内存数据库顶替</text>
+  <text class="sm" x="405" y="352" text-anchor="middle">断言最终状态，不断言调了哪些查询</text>
+  <text class="sm on-b" x="405" y="374" text-anchor="middle">第 8、10 章</text>
+
+  <rect class="bx-p" x="552" y="250" width="196" height="134" rx="10"/>
+  <text class="ttl on-p" x="650" y="276" text-anchor="middle">不受管依赖：换成替身</text>
+  <text class="sm" x="650" y="298" text-anchor="middle">消息总线、邮件、第三方接口</text>
+  <text class="sm" x="650" y="320" text-anchor="middle">在系统的<tspan font-weight="700">最边缘</tspan>替换；</text>
+  <text class="sm" x="650" y="336" text-anchor="middle">验证发出的内容和次数；</text>
+  <text class="sm" x="650" y="352" text-anchor="middle">只替换你自己写的适配器</text>
+  <text class="sm on-p" x="650" y="374" text-anchor="middle">第 5、8、9 章</text>
+</svg>
+<figcaption>图 16-2　替身只留给不受管的进程外依赖（<a href="ch05.html">第 5 章</a>、<a href="ch08.html">第 8 章</a>、<a href="ch09.html">第 9 章</a>）</figcaption>
+</figure>
+
+<div class="tw">
+<table>
+  <tr><th>依赖</th><th>类型</th><th>测试里怎么办</th></tr>
+  <tr><td>另一个领域类、值对象、工具函数</td><td>进程内</td><td>用真的</td></tr>
+  <tr><td>只有本应用读写的数据库</td><td>受管</td><td>集成测试里用真的；单元测试根本不该碰到它</td></tr>
+  <tr><td>和其他应用<strong>共用</strong>的数据库</td><td>两者兼有</td><td>别的应用看得到的表当作不受管依赖（替换）；其余的表当作受管依赖（用真的）</td></tr>
+  <tr><td>消息总线、邮件网关、支付等第三方接口</td><td>不受管</td><td>替换。优先手写一个记录调用的 Spy，放在最外层的适配器上</td></tr>
+  <tr><td>当前时间</td><td>隐式的输入</td><td>作为值或时钟显式传入（<a href="ch11.html">第 11 章</a>、<a href="ch13.html">第 13 章</a>）</td></tr>
+  <tr><td>日志</td><td>看给谁看</td><td>业务方要求的<strong>支持日志</strong>是可观察行为，当作不受管依赖来验证；给开发者看的<strong>诊断日志</strong>不测（<a href="ch08.html">第 8 章</a>）</td></tr>
+</table>
+</div>
+
+<div class="box key">
+  <div class="t">&#9733; 一句话版本</div>
+  <p>
+    <strong>Mock 用来验证「你的系统对外界说了什么」，不是用来把被测的类和它的邻居隔开。</strong>
+    只有跨出应用边界、外部系统看得见的通信才是可观察行为；应用内部的通信是实现细节。
+  </p>
+</div>
+
+<h2 id="pillars">四大支柱</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="四大支柱一览。防止回归：代码错了测试会红，靠执行更多、更重要的代码获得。抗重构：代码没错测试不会红，靠只验证可观察行为获得，不可妥协。快速反馈：跑得快。可维护性：读得懂、跑得起来，不可妥协。前三者不能同时拉满，真正的取舍只在防止回归和快速反馈之间：单元测试偏向快，端到端测试偏向保护">
+  <rect class="bx-g" x="14" y="16" width="176" height="150" rx="12"/>
+  <text class="ttl on-g" x="102" y="42" text-anchor="middle">① 防止回归</text>
+  <text class="sm" x="102" y="64" text-anchor="middle">代码错了，它会红</text>
+  <text class="sm" x="102" y="92" text-anchor="middle">来自：执行的代码多、</text>
+  <text class="sm" x="102" y="108" text-anchor="middle">复杂、重要</text>
+  <text class="sm on-g" x="102" y="148" text-anchor="middle">少了它 &rarr; 漏报</text>
+
+  <rect class="bx-b" x="200" y="16" width="176" height="150" rx="12"/>
+  <text class="ttl on-b" x="288" y="42" text-anchor="middle">② 抗重构</text>
+  <text class="sm" x="288" y="64" text-anchor="middle">代码没错，它不红</text>
+  <text class="sm" x="288" y="92" text-anchor="middle">来自：只验证可观察行为，</text>
+  <text class="sm" x="288" y="108" text-anchor="middle">不碰实现细节</text>
+  <text class="sm on-b" x="288" y="148" text-anchor="middle">少了它 &rarr; 假警报</text>
+
+  <rect class="bx-p" x="386" y="16" width="176" height="150" rx="12"/>
+  <text class="ttl on-p" x="474" y="42" text-anchor="middle">③ 快速反馈</text>
+  <text class="sm" x="474" y="64" text-anchor="middle">跑得快，随时能跑</text>
+  <text class="sm" x="474" y="92" text-anchor="middle">来自：不碰进程外依赖，</text>
+  <text class="sm" x="474" y="108" text-anchor="middle">执行的代码少</text>
+  <text class="sm on-p" x="474" y="148" text-anchor="middle">少了它 &rarr; 没人跑</text>
+
+  <rect class="bx-a" x="572" y="16" width="174" height="150" rx="12"/>
+  <text class="ttl on-a" x="659" y="42" text-anchor="middle">④ 可维护性</text>
+  <text class="sm" x="659" y="64" text-anchor="middle">读得懂，跑得起来</text>
+  <text class="sm" x="659" y="92" text-anchor="middle">来自：测试短、清楚，</text>
+  <text class="sm" x="659" y="108" text-anchor="middle">依赖少</text>
+  <text class="sm on-a" x="659" y="148" text-anchor="middle">少了它 &rarr; 改不动</text>
+
+  <text class="lbl" x="380" y="196" text-anchor="middle">测试的价值 = ① &times; ② &times; ③ &times; ④　——　任何一项为零，整体为零</text>
+
+  <rect class="bx" x="14" y="214" width="732" height="72" rx="12"/>
+  <text class="lbl" x="30" y="240"><tspan font-weight="700">前三项不能同时拉满。</tspan>②（和 ④）不能让步 —— 抗重构基本上只有「有」和「没有」两种状态。</text>
+  <text class="lbl" x="30" y="264">所以真正能调的只有 ① 和 ③ 之间的那根滑杆：单元测试偏向快，端到端测试偏向保护，集成测试在中间。</text>
+</svg>
+<figcaption>图 16-3　衡量任何一个测试的四把尺子（<a href="ch04.html">第 4 章</a>）</figcaption>
+</figure>
+
+<h2 id="styles">三种测试风格</h2>
+
+<div class="tw">
+<table>
+  <tr><th>风格</th><th>验证的是</th><th>抗重构</th><th>可维护性</th><th>什么时候用</th></tr>
+  <tr><td><strong>基于输出</strong></td><td>给定输入，返回值是什么</td><td>最好</td><td>最好</td><td>首选。需要代码是没有副作用的函数 —— 把决策写成「函数式核心」</td></tr>
+  <tr><td><strong>基于状态</strong></td><td>操作之后，对象或数据库的状态是什么</td><td>好（只看公开的状态时）</td><td>中等</td><td>领域对象；集成测试里验证数据库</td></tr>
+  <tr><td><strong>基于通信</strong></td><td>被测系统对协作者调用了什么</td><td>最差，最容易绑住实现</td><td>最差</td><td>只用于跨出应用边界、发给不受管依赖的通信</td></tr>
+</table>
+</div>
+<p class="src">出处：<a href="ch06.html">第 6 章</a>。两个学派的区别（「隔离」指隔离测试还是隔离类）见<a href="ch02.html">第 2 章</a>；本教程和原书都站在经典学派一边。</p>
+
+<h2 id="write">写一个测试的清单</h2>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void changing_email_from_non_corporate_to_corporate() {          // 名字：一句业务上的话
+    var company = new Company("mycorp.com", 1);                  // 准备（Arrange）
+    var sut = new User(1, "user@gmail.com", UserType.CUSTOMER, false);
+
+    sut.changeEmail("new@mycorp.com", company);                  // 执行（Act）：一行
+
+    assertThat(company.getNumberOfEmployees()).isEqualTo(2);     // 断言（Assert）：字面量
+    assertThat(sut.getEmail()).isEqualTo("new@mycorp.com");
+    assertThat(sut.getType()).isEqualTo(UserType.EMPLOYEE);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_changing_email_from_non_corporate_to_corporate():       # 名字：一句业务上的话
+    company = Company("mycorp.com", 1)                           # 准备（Arrange）
+    sut = User(1, "user@gmail.com", UserType.CUSTOMER, False)
+
+    sut.change_email("new@mycorp.com", company)                  # 执行（Act）：一行
+
+    assert company.number_of_employees == 2                      # 断言（Assert）：字面量
+    assert sut.email == "new@mycorp.com"
+    assert sut.type == UserType.EMPLOYEE
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changing email from non corporate to corporate', () =&gt; {   // 名字：一句业务上的话
+  const company = new Company('mycorp.com', 1)                   // 准备（Arrange）
+  const sut = new User(1, 'user@gmail.com', UserType.Customer, false)
+
+  sut.changeEmail('new@mycorp.com', company)                     // 执行（Act）：一行
+
+  expect(company.numberOfEmployees).toBe(2)                      // 断言（Assert）：字面量
+  expect(sut.email).toBe('new@mycorp.com')
+  expect(sut.type).toBe(UserType.Employee)
+})
+</pre></div>
+</div>
+
+<div class="tw">
+<table>
+  <tr><th>检查项</th><th>说明</th><th>出处</th></tr>
+  <tr><td>三段结构：准备、执行、断言</td><td>用空行分开。一个测试只有一轮；出现第二个「执行」就拆成两个测试</td><td><a href="ch03.html">第 3 章</a></td></tr>
+  <tr><td>「执行」只有一行</td><td>需要好几行才能完成一个操作，说明被测代码的接口有问题（封装不到位）</td><td><a href="ch03.html">第 3 章</a></td></tr>
+  <tr><td>测试里没有 <code>if</code> 和循环</td><td>测试应该是一条直线。要覆盖多种输入，用参数化测试</td><td><a href="ch03.html">第 3 章</a></td></tr>
+  <tr><td>名字是一句话</td><td>讲给不懂代码的人也听得懂；不带被测方法的名字；不套固定格式</td><td><a href="ch03.html">第 3 章</a></td></tr>
+  <tr><td>被测对象叫 <code>sut</code></td><td>一眼分清谁是被测的、谁是配角</td><td><a href="ch03.html">第 3 章</a></td></tr>
+  <tr><td>准备代码的复用用工厂方法</td><td>不要放进构造函数或全局的初始化方法里 —— 那会让测试互相耦合、读起来要来回跳</td><td><a href="ch03.html">第 3 章</a></td></tr>
+  <tr><td>期望值是字面量</td><td>不在测试里把算法再写一遍</td><td><a href="ch11.html">第 11 章</a></td></tr>
+  <tr><td>只通过公开接口</td><td>不测私有方法，不为了测试暴露私有状态</td><td><a href="ch11.html">第 11 章</a></td></tr>
+  <tr><td>验证的是一个<strong>行为</strong>，不是一个类或一个方法</td><td>一个行为可以跨好几个类；一个类也可以有好几个行为</td><td><a href="ch02.html">第 2 章</a></td></tr>
+  <tr><td>异步：每个结果都等到了</td><td>把期望值改错，确认它会红</td><td><a href="ch13.html">第 13 章</a></td></tr>
+</table>
+</div>
+
+<h2 id="integration">集成测试的清单</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 258" role="img" aria-label="一个集成测试的结构。开始时清理数据。准备、执行、断言三段各用自己的事务或连接。准备段通过仓储写入测试数据。执行段调用控制器，被测系统连接真实数据库，并把消息发给放在最边缘的 Spy。断言段重新从数据库读出状态来验证，并检查 Spy 记录到的消息">
+  <rect class="bx-d" x="14" y="16" width="120" height="60" rx="10"/>
+  <text class="lbl" x="74" y="42" text-anchor="middle">开始时清库</text>
+  <text class="sm" x="74" y="60" text-anchor="middle">不是结束时</text>
+  <path class="ln" d="M136 46 H150" marker-end="url(#ar)"/>
+
+  <rect class="bx" x="154" y="16" width="180" height="60" rx="10"/>
+  <text class="ttl" x="244" y="40" text-anchor="middle">准备</text>
+  <text class="sm" x="244" y="60" text-anchor="middle">事务 1：写入用户和公司</text>
+  <path class="ln" d="M336 46 H350" marker-end="url(#ar)"/>
+
+  <rect class="bx-a" x="354" y="16" width="180" height="60" rx="10"/>
+  <text class="ttl on-a" x="444" y="40" text-anchor="middle">执行</text>
+  <text class="sm" x="444" y="60" text-anchor="middle">事务 2：调用控制器</text>
+  <path class="ln" d="M536 46 H550" marker-end="url(#ar)"/>
+
+  <rect class="bx" x="554" y="16" width="192" height="60" rx="10"/>
+  <text class="ttl" x="650" y="40" text-anchor="middle">断言</text>
+  <text class="sm" x="650" y="60" text-anchor="middle">事务 3：重新读出来再比</text>
+
+  <path class="ln-b" d="M244 78 V140" marker-end="url(#ar-b)"/>
+  <path class="ln-b" d="M420 78 V140" marker-end="url(#ar-b)"/>
+  <path class="ln-b" d="M620 140 V80" marker-end="url(#ar-b)"/>
+  <rect class="bx-b" x="154" y="144" width="500" height="44" rx="10"/>
+  <text class="lbl on-b" x="404" y="171" text-anchor="middle">真实的数据库（和生产环境同一种；结构由迁移脚本建出来）</text>
+
+  <path class="ln-p" d="M500 78 V226 H556" marker-end="url(#ar-p)"/>
+  <path class="ln-p" d="M700 204 V80" marker-end="url(#ar-p)"/>
+  <rect class="bx-p" x="560" y="208" width="186" height="38" rx="10"/>
+  <text class="lbl on-p" x="653" y="232" text-anchor="middle">消息总线的 Spy（最边缘）</text>
+
+  <text class="sm" x="154" y="222">三段各用各的事务：否则断言读到的可能只是</text>
+  <text class="sm" x="154" y="240">内存里的缓存，而不是真正写进数据库的东西</text>
+</svg>
+<figcaption>图 16-4　一个集成测试的骨架（<a href="ch10.html">第 10 章</a>）。可运行的版本在配套示例里</figcaption>
+</figure>
+
+<div class="tw">
+<table>
+  <tr><th>检查项</th><th>出处</th></tr>
+  <tr><td>每个业务场景挑<strong>最长的那条成功路径</strong>，让它走过所有进程外依赖；一条走不完就再加一条</td><td><a href="ch08.html">第 8 章</a></td></tr>
+  <tr><td>边界情况尽量留给单元测试。在控制器里「立即失败」的那种边界情况不用专门测</td><td><a href="ch08.html">第 8 章</a></td></tr>
+  <tr><td>数据库是真的，而且和生产环境是<strong>同一种</strong>。不用内存数据库顶替</td><td><a href="ch10.html">第 10 章</a></td></tr>
+  <tr><td>数据库结构和参考数据放进版本库，用迁移脚本管理；每个开发者有自己的数据库实例</td><td><a href="ch10.html">第 10 章</a></td></tr>
+  <tr><td>集成测试<strong>顺序执行</strong>，每个测试<strong>开始时</strong>清理数据</td><td><a href="ch10.html">第 10 章</a></td></tr>
+  <tr><td>准备、执行、断言各用自己的事务（工作单元）</td><td><a href="ch10.html">第 10 章</a></td></tr>
+  <tr><td>仓储不单独测，由集成测试顺带覆盖；读操作只测最复杂、最重要的</td><td><a href="ch10.html">第 10 章</a></td></tr>
+  <tr><td>不受管依赖在最边缘替换；断言发出的<strong>内容</strong>和<strong>次数</strong>，并确认没有多余的调用</td><td><a href="ch09.html">第 9 章</a></td></tr>
+  <tr><td>只为确实需要替换的依赖引入接口。只有一个实现的接口不是抽象</td><td><a href="ch08.html">第 8 章</a></td></tr>
+  <tr><td>并发问题（两个事务改同一行）用开两个连接的集成测试来验证</td><td><a href="ch13.html">第 13 章</a></td></tr>
+</table>
+</div>
+
+<h2 id="anti">反模式速查</h2>
+
+<div class="tw">
+<table>
+  <tr><th>看到这个</th><th>问题</th><th>改成</th><th>出处</th></tr>
+  <tr><td>为了测试把私有方法改成公开的</td><td>测试绑住了实现细节</td><td>通过公开接口间接测。私有方法复杂到必须单独测，说明里面藏着一个该抽出来的类</td><td><a href="ch11.html">第 11 章</a></td></tr>
+  <tr><td>为了断言而暴露私有字段</td><td>同上</td><td>像生产代码那样去观察：看它的行为产生了什么可见的结果</td><td><a href="ch11.html">第 11 章</a></td></tr>
+  <tr><td>测试里把算法又写了一遍</td><td>代码错，测试跟着错</td><td>把期望值写成字面量</td><td><a href="ch11.html">第 11 章</a></td></tr>
+  <tr><td>生产代码里有只给测试用的开关或方法</td><td>代码污染</td><td>把不同的行为放到接口的不同实现里</td><td><a href="ch11.html">第 11 章</a></td></tr>
+  <tr><td>Mock 一个具体类，只替换它的一部分方法</td><td>这个类同时在做两件事</td><td>把「做决定」和「和外界通信」拆成两个类</td><td><a href="ch11.html">第 11 章</a></td></tr>
+  <tr><td>代码里直接读系统时间</td><td>测试结果依赖运行的时刻</td><td>把时间作为值或时钟显式传入</td><td><a href="ch11.html">第 11 章</a></td></tr>
+  <tr><td>验证领域对象之间的调用</td><td>内部通信是实现细节</td><td>断言最终状态或返回值</td><td><a href="ch05.html">第 5 章</a></td></tr>
+  <tr><td>Mock 掉自己的数据库</td><td>受管依赖的交互是实现细节；而且测不出真实的数据库问题</td><td>集成测试里用真的</td><td><a href="ch08.html">第 8 章</a></td></tr>
+  <tr><td>Mock 第三方库的类</td><td>你不掌握它的行为，Mock 出来的是你的想象</td><td>写一个自己的适配器，Mock 适配器</td><td><a href="ch09.html">第 9 章</a></td></tr>
+  <tr><td>没有断言，或只断言「不为空」</td><td>有覆盖率，没有验证</td><td>断言具体的结果</td><td><a href="ch01.html">第 1 章</a>、<a href="ch15.html">第 15 章</a></td></tr>
+  <tr><td>给覆盖率（或变异得分）定硬指标</td><td>数字会被优化，测试质量不会</td><td>把它当成发现漏洞的线索，不当成目标</td><td><a href="ch01.html">第 1 章</a>、<a href="ch14.html">第 14 章</a></td></tr>
+  <tr><td>测试里用固定的 <code>sleep</code> 等结果</td><td>又慢又不稳</td><td>等到结果；或把时间换成替身；最后才是轮询加超时</td><td><a href="ch13.html">第 13 章</a></td></tr>
+</table>
+</div>
+
+<h2 id="symptoms">遇到问题查哪里</h2>
+
+<div class="tw">
+<table>
+  <tr><th>症状</th><th>多半是</th><th>去看</th></tr>
+  <tr><td>不知道怎么把测试跑起来、怎么看覆盖率、怎么接进 CI</td><td>—</td><td><a href="ch00.html">第 0 章</a></td></tr>
+  <tr><td>一重构，一大片测试就红，可功能没坏</td><td>测试验证了实现细节；Mock 用多了</td><td><a href="ch04.html">第 4 章</a>、<a href="ch05.html">第 5 章</a></td></tr>
+  <tr><td>测试全绿，上线还是出 Bug</td><td>断言太弱；边界情况没覆盖；集成点没测</td><td><a href="ch01.html">第 1 章</a>、<a href="ch08.html">第 8 章</a>、<a href="ch14.html">第 14 章</a></td></tr>
+  <tr><td>覆盖率很高，但心里没底</td><td>覆盖率只说明代码被执行过</td><td><a href="ch01.html">第 1 章</a>、<a href="ch14.html">第 14 章</a></td></tr>
+  <tr><td>测试集太慢，大家不愿意跑</td><td>本该是单元测试的东西写成了集成测试；业务逻辑和进程外依赖搅在一起</td><td><a href="ch07.html">第 7 章</a>、<a href="ch08.html">第 8 章</a></td></tr>
+  <tr><td>准备代码比被测逻辑还长，全是 Mock 的设置</td><td>被测代码落在「过度复杂」的象限</td><td><a href="ch07.html">第 7 章</a></td></tr>
+  <tr><td>这段代码「没法测」</td><td>决策和副作用没有分开</td><td><a href="ch06.html">第 6 章</a>、<a href="ch07.html">第 7 章</a>；遗留代码看<a href="ch12.html">第 12 章</a></td></tr>
+  <tr><td>测试时好时坏</td><td>真实时间、固定的等待、并发、测试之间共享数据</td><td><a href="ch13.html">第 13 章</a>、<a href="ch10.html">第 10 章</a></td></tr>
+  <tr><td>一个测试挂了，一串测试跟着挂</td><td>测试之间共享状态；或者许多测试重复验证同一件事</td><td><a href="ch03.html">第 3 章</a>、<a href="ch10.html">第 10 章</a></td></tr>
+  <tr><td>测试读不懂，不知道它想验证什么</td><td>没有 AAA 结构；名字照抄方法名；期望值是算出来的</td><td><a href="ch03.html">第 3 章</a>、<a href="ch11.html">第 11 章</a></td></tr>
+  <tr><td>接手了一堆没有测试的代码，不敢动</td><td>—</td><td><a href="ch12.html">第 12 章</a></td></tr>
+  <tr><td>AI 一下生成了几十个测试，不知道该不该合并</td><td>—</td><td><a href="ch15.html">第 15 章</a></td></tr>
+  <tr><td>该不该给这个接口抽一个 interface</td><td>只有需要替换的不受管依赖才需要</td><td><a href="ch08.html">第 8 章</a></td></tr>
+</table>
+</div>
+
+<h2 id="glossary">术语表</h2>
+
+<div class="tw">
+<table>
+  <tr><th>术语</th><th>一句话解释</th><th>出处</th></tr>
+  <tr><td>被测系统（SUT）</td><td>这个测试要验证的那个对象或那组对象</td><td><a href="ch02.html">第 2 章</a></td></tr>
+  <tr><td>协作者</td><td>被测系统依赖的、可变的或共享的对象</td><td><a href="ch02.html">第 2 章</a></td></tr>
+  <tr><td>进程外依赖</td><td>跑在应用进程之外的东西：数据库、消息队列、别的服务</td><td><a href="ch02.html">第 2 章</a></td></tr>
+  <tr><td>受管 / 不受管依赖</td><td>只有你的应用能访问的进程外依赖 / 别的系统也看得见的</td><td><a href="ch08.html">第 8 章</a></td></tr>
+  <tr><td>测试替身</td><td>测试里顶替真实依赖的对象的统称</td><td><a href="ch05.html">第 5 章</a></td></tr>
+  <tr><td>Mock</td><td>模拟并检查<strong>向外的</strong>交互（被测系统让依赖去做的事）</td><td><a href="ch05.html">第 5 章</a></td></tr>
+  <tr><td>Stub</td><td>模拟<strong>向内的</strong>交互（给被测系统提供数据）。不要对它做断言</td><td><a href="ch05.html">第 5 章</a></td></tr>
+  <tr><td>Spy</td><td>手写的 Mock：把收到的调用记下来，供测试事后检查</td><td><a href="ch05.html">第 5 章</a>、<a href="ch09.html">第 9 章</a></td></tr>
+  <tr><td>可观察行为</td><td>客户端为了达成目标必须用到的操作和状态。其余的都是实现细节</td><td><a href="ch05.html">第 5 章</a></td></tr>
+  <tr><td>假警报 / 漏报</td><td>代码没错测试却红了 / 代码错了测试却没红</td><td><a href="ch04.html">第 4 章</a></td></tr>
+  <tr><td>AAA</td><td>准备（Arrange）、执行（Act）、断言（Assert）</td><td><a href="ch03.html">第 3 章</a></td></tr>
+  <tr><td>函数式核心 / 可变外壳</td><td>做决定的纯函数 / 收集输入并把决定落到外部世界的薄层</td><td><a href="ch06.html">第 6 章</a></td></tr>
+  <tr><td>Humble Object</td><td>把难测的部分做得尽量薄，把逻辑挪到好测的地方</td><td><a href="ch07.html">第 7 章</a></td></tr>
+  <tr><td>领域事件</td><td>领域模型记下「发生了什么」，由外层翻译成对外部系统的调用</td><td><a href="ch07.html">第 7 章</a></td></tr>
+  <tr><td>特征测试</td><td>记录代码「现在做什么」的测试，重构遗留代码时的脚手架</td><td><a href="ch12.html">第 12 章</a></td></tr>
+  <tr><td>接缝</td><td>不改那个位置的代码，就能改变那里行为的地方</td><td><a href="ch12.html">第 12 章</a></td></tr>
+  <tr><td>竞态条件</td><td>结果取决于并发操作谁先谁后</td><td><a href="ch13.html">第 13 章</a></td></tr>
+  <tr><td>变异体</td><td>被工具故意改错一处的生产代码，用来检验测试</td><td><a href="ch14.html">第 14 章</a></td></tr>
+  <tr><td>属性</td><td>对所有合法输入都应该成立的一条规律</td><td><a href="ch14.html">第 14 章</a></td></tr>
+</table>
+</div>
+
+<div class="box tip">
+  <div class="t">&#128161; 只记一条的话</div>
+  <p>
+    <strong>测试要验证的是「系统做了什么」，不是「系统是怎么做的」。</strong>
+    前者让你敢改代码；后者让你不敢改代码。这一页上几乎每一条规则，都是这句话在某个具体场合的展开。
+  </p>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

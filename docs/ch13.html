@@ -1,0 +1,1036 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 13 章 · 异步与并发代码的测试 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="13">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 13 章 · 补充</span>
+<h1>异步与并发代码的测试</h1>
+<p class="lede">
+  原书的例子全是同步代码。可你每天写的多半带着 <code>async</code>、回调、定时器或线程。
+  这类代码的测试有三种特有的坏法：<strong>该红的时候绿、要等真实的时间、时好时坏</strong>。这一章逐个讲怎么避开。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>知道异步测试为什么会「明明错了却显示通过」，以及怎么杜绝</li>
+    <li>把异步留在外壳，让决策逻辑保持同步</li>
+    <li>测试里<strong>不等真实的时间</strong>：把「等待」变成可以替换的依赖</li>
+    <li>等一个不受你控制的异步结果时，用「轮询 + 超时」代替固定的 <code>sleep</code></li>
+    <li>理解竞态条件，会为它写一个能稳定重现的测试</li>
+    <li>知道测试「时好时坏」的常见原因和处理办法</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<div class="box note">
+  <div class="t">&#9432; 这一章不是原书内容</div>
+  <p>
+    本章是教程的补充，用的仍然是前面的框架：四大支柱（第 4 章）、函数式核心与外壳（第 6、7 章）、把时间当成显式依赖（第 11 章）。
+    本章的代码片段都在三种语言里实际运行过（Python 3.12 + pytest-asyncio、Vitest 3.2、Java 21 + JUnit 5），文中提到的「通过 / 失败」是实测结果。
+    不同版本的框架在细节上可能不同。
+  </p>
+</div>
+
+<h2 id="why">异步测试的三种坏法</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="异步测试的三种坏法：一、测试在断言执行之前就结束了，错误没人看见；二、测试靠真实的等待，又慢又不稳；三、执行顺序每次不同，测试时好时坏">
+  <rect class="bx-r" x="14" y="16" width="236" height="198" rx="12"/>
+  <text class="ttl on-r" x="132" y="44" text-anchor="middle">① 该红却绿</text>
+  <text class="sm" x="132" y="70" text-anchor="middle">测试函数先结束了，</text>
+  <text class="sm" x="132" y="88" text-anchor="middle">断言之后才执行（或根本没执行）</text>
+  <text class="sm" x="132" y="124" text-anchor="middle">伤的是：<tspan font-weight="700">防止回归</tspan></text>
+  <text class="sm" x="132" y="150" text-anchor="middle">最危险 —— 你以为有保护</text>
+  <text class="sm on-r" x="132" y="190" text-anchor="middle">对策：等到结果再断言</text>
+
+  <rect class="bx-a" x="262" y="16" width="236" height="198" rx="12"/>
+  <text class="ttl on-a" x="380" y="44" text-anchor="middle">② 等真实的时间</text>
+  <text class="sm" x="380" y="70" text-anchor="middle">被测代码要等 30 秒超时，</text>
+  <text class="sm" x="380" y="88" text-anchor="middle">测试也跟着等 30 秒</text>
+  <text class="sm" x="380" y="124" text-anchor="middle">伤的是：<tspan font-weight="700">快速反馈</tspan></text>
+  <text class="sm" x="380" y="150" text-anchor="middle">慢到没人愿意跑</text>
+  <text class="sm on-a" x="380" y="190" text-anchor="middle">对策：把等待变成可替换的依赖</text>
+
+  <rect class="bx-p" x="510" y="16" width="236" height="198" rx="12"/>
+  <text class="ttl on-p" x="628" y="44" text-anchor="middle">③ 时好时坏</text>
+  <text class="sm" x="628" y="70" text-anchor="middle">结果取决于谁先跑完，</text>
+  <text class="sm" x="628" y="88" text-anchor="middle">十次里红一次</text>
+  <text class="sm" x="628" y="124" text-anchor="middle">伤的是：<tspan font-weight="700">对测试的信任</tspan></text>
+  <text class="sm" x="628" y="150" text-anchor="middle">大家开始「重跑一下就好」</text>
+  <text class="sm on-p" x="628" y="190" text-anchor="middle">对策：让顺序可控</text>
+</svg>
+<figcaption>图 13-1　三种坏法，各伤一根支柱</figcaption>
+</figure>
+
+<h2 id="core">先问一句：这段逻辑非得是异步的吗</h2>
+
+<p>
+  异步几乎总是因为 I/O：读数据库、发请求、等消息。而<strong>做决定</strong>的代码 —— 算折扣、判断用户类型、校验规则 —— 不需要 I/O，也就不需要异步。
+  第 6、7 章讲的「核心 / 外壳」分离，在这里多了一层好处：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="把异步留在外壳：外壳负责读数据、调用核心、写数据，是异步的，用少量集成测试覆盖；核心是同步的纯逻辑，用大量普通的单元测试覆盖">
+  <rect class="bx-b" x="30" y="20" width="700" height="190" rx="14"/>
+  <text class="ttl on-b" x="50" y="48">外壳：异步</text>
+  <text class="sm" x="50" y="70">async / await、线程、定时器都留在这一层</text>
+
+  <rect class="bx" x="50" y="92" width="150" height="50" rx="8"/><text class="lbl" x="125" y="114" text-anchor="middle">await 读数据</text><text class="sm" x="125" y="132" text-anchor="middle">数据库 / HTTP</text>
+  <path class="ln-b" d="M202 117 H256" marker-end="url(#ar-b)"/>
+  <rect class="bx-a" x="260" y="82" width="240" height="70" rx="10"/>
+  <text class="ttl on-a" x="380" y="108" text-anchor="middle">核心：同步</text>
+  <text class="sm" x="380" y="128" text-anchor="middle">输入是值，输出是值</text>
+  <text class="sm" x="380" y="144" text-anchor="middle">没有 await，没有线程</text>
+  <path class="ln-b" d="M502 117 H556" marker-end="url(#ar-b)"/>
+  <rect class="bx" x="560" y="92" width="150" height="50" rx="8"/><text class="lbl" x="635" y="114" text-anchor="middle">await 写数据</text><text class="sm" x="635" y="132" text-anchor="middle">数据库 / 消息</text>
+
+  <text class="sm on-b" x="125" y="182" text-anchor="middle">少量集成测试</text>
+  <text class="sm on-a" x="380" y="182" text-anchor="middle">大量普通的单元测试 —— 本章的麻烦一样都没有</text>
+  <text class="sm on-b" x="635" y="182" text-anchor="middle">少量集成测试</text>
+</svg>
+<figcaption>图 13-2　异步是外壳的事。核心保持同步，测试它就和前面十一章一样简单</figcaption>
+</figure>
+
+<p>
+  配套示例的 TypeScript 版就是这样：<code>UserController.changeEmail</code> 是 <code>async</code> 的（它要读写数据库），
+  但 <code>User.changeEmail</code> 是普通的同步方法，它的 7 个单元测试里没有一个 <code>await</code>。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 本章最重要的一条</div>
+  <p>
+    如果你发现需要为一段<strong>业务规则</strong>写异步测试，先别急着学技巧，回头看看这段规则能不能从异步代码里抽出来（第 7 章、第 12 章）。
+    下面的技巧是给真正躲不开异步的那部分代码准备的：重试、超时、调度、并发访问。
+  </p>
+</div>
+
+<h2 id="await">坏法一：测试结束了，断言还没执行</h2>
+
+<p>先看三个<strong>错误</strong>的测试。它们断言的期望值都是错的（或者根本没断言到东西），照理应该失败：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+static CompletableFuture&lt;String&gt; loadEmail(int userId) { /* 异步读取 */ }
+
+@Test
+void loads_the_email() {
+    loadEmail(1).thenAccept(email -&gt;
+        assertThat(email).isEqualTo("WRONG"));    // 在另一个线程里失败，没人接住
+}                                                 // 测试方法已经返回：通过
+</pre></div>
+<div class="code" data-lang="python"><pre>
+async def load_user(user_id): ...                 # 异步读取
+
+
+def test_loads_the_user():
+    user = load_user(1)        # 忘了 await：拿到的是「协程对象」，不是用户
+    assert user                # 协程对象恒为真：通过
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+async function loadUser(id: number) { /* 异步读取 */ }
+
+test('loads the user', () =&gt; {
+  loadUser(1).then((user) =&gt; {
+    expect(user.email).toBe('WRONG')              // 测试函数返回之后才执行
+  })
+})
+</pre></div>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="时间线：测试函数启动异步操作后立刻返回，框架此时判定通过；断言在之后才执行并失败，但已经没有人在听">
+  <path class="ln" d="M40 150 H730" marker-end="url(#ar)"/>
+  <text class="sm" x="730" y="172" text-anchor="end">时间 &rarr;</text>
+
+  <rect class="bx" x="50" y="70" width="170" height="44" rx="8"/>
+  <text class="lbl" x="135" y="90" text-anchor="middle">测试函数开始</text><text class="sm" x="135" y="106" text-anchor="middle">启动异步操作</text>
+  <path class="ln" d="M135 114 V146"/>
+
+  <rect class="bx-g" x="250" y="70" width="170" height="44" rx="8"/>
+  <text class="lbl on-g" x="335" y="90" text-anchor="middle">测试函数返回</text><text class="sm" x="335" y="106" text-anchor="middle">框架：没抛异常 &rarr; 通过</text>
+  <path class="ln-g" d="M335 114 V146"/>
+
+  <rect class="bx-r" x="520" y="70" width="190" height="44" rx="8"/>
+  <text class="lbl on-r" x="615" y="90" text-anchor="middle">异步操作完成</text><text class="sm" x="615" y="106" text-anchor="middle">断言执行：失败</text>
+  <path class="ln-r" d="M615 114 V146"/>
+
+  <path class="ln-r" style="stroke-dasharray:5 4" d="M425 40 H710"/>
+  <text class="sm on-r" x="568" y="32" text-anchor="middle">这一段里发生的事，框架已经不看了</text>
+  <text class="sm" x="335" y="192" text-anchor="middle">结果在这里就定了</text>
+</svg>
+<figcaption>图 13-3　框架只知道「测试函数有没有抛异常」。它返回之后的事，默认没人管</figcaption>
+</figure>
+
+<p>实测结果：</p>
+
+<div class="tw">
+<table>
+  <tr><th>语言 / 框架</th><th>上面那个错误的测试</th><th>有没有东西提醒你</th></tr>
+  <tr><td>Java · JUnit 5</td><td><strong>通过</strong></td><td>没有。异常被 <code>CompletableFuture</code> 吞进了返回值里</td></tr>
+  <tr><td>Python · pytest 9</td><td><strong>通过</strong></td><td>有一条警告：<code>coroutine 'load_user' was never awaited</code>，但不影响结果</td></tr>
+  <tr><td>TypeScript · Vitest 3.2</td><td>该测试显示<strong>通过</strong></td><td>有。整次运行会报 <code>Unhandled Rejection</code> 并以失败退出 —— 但并不是每个框架、每个版本都这样</td></tr>
+</table>
+</div>
+
+<h3>正确的写法：等到结果，再在测试自己的执行流里断言</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+@Timeout(2)                                              // 兜底：卡住就判失败
+void loads_the_email() throws Exception {
+    String email = loadEmail(1).get(1, TimeUnit.SECONDS);    // 在测试线程里等结果
+
+    assertThat(email).isEqualTo("user@mycorp.com");
+}
+
+// 或者用 AssertJ 的写法，等待和断言连在一起：
+// assertThat(loadEmail(1))
+//     .succeedsWithin(Duration.ofSeconds(1))
+//     .isEqualTo("user@mycorp.com");
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# pyproject.toml / pytest.ini 里配置：asyncio_mode = "auto"（来自 pytest-asyncio 插件）
+
+async def test_loads_the_user():                 # 测试函数本身是 async 的
+    user = await load_user(1)                    # 等到结果
+
+    assert user["email"] == "user@mycorp.com"
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('loads the user', async () =&gt; {             // 测试函数本身是 async 的
+  const user = await loadUser(1)                 // 等到结果
+
+  expect(user.email).toBe('user@mycorp.com')
+})
+
+// 断言「会失败」也要 await：
+// await expect(loadUser(-1)).rejects.toThrow('not found')
+</pre></div>
+</div>
+
+<p>规则只有一条：<strong>断言必须发生在框架正在等的那条执行流里。</strong>各语言落到实处是：</p>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>要做的</th><th>防呆措施</th></tr>
+  <tr>
+    <td>Java</td>
+    <td>在测试线程里 <code>get(超时)</code> / <code>join()</code> 拿到值再断言；不要把断言写进 <code>thenAccept</code> 之类的回调</td>
+    <td>给异步测试加 <code>@Timeout</code>。没有自动的检查，靠评审</td>
+  </tr>
+  <tr>
+    <td>Python</td>
+    <td>测试写成 <code>async def</code>，装 pytest-asyncio（或 anyio）；每个协程调用前都有 <code>await</code></td>
+    <td>pytest 配置 <code>filterwarnings = ["error"]</code>，把「协程从未被 await」的警告变成失败（实测有效）</td>
+  </tr>
+  <tr>
+    <td>TypeScript</td>
+    <td>测试写成 <code>async</code>，每个 Promise 前都有 <code>await</code>（或者把它 <code>return</code> 出去）</td>
+    <td>开启 typescript-eslint 的 <code>no-floating-promises</code> 规则，在写代码时就拦住没人等的 Promise</td>
+  </tr>
+</table>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; Python：没装插件的 async 测试</div>
+  <p>
+    pytest 本身不会运行 <code>async def</code> 的测试。pytest 9 里它会直接<strong>失败</strong>并提示你装插件（实测）；
+    而较早的版本只是<strong>跳过</strong>并给一条警告 —— 一整个文件的测试都没跑，报告却是绿的。
+    看一眼测试报告里的 <code>skipped</code> 数量是个好习惯。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#128161; 怎么确认一个异步测试真的在验证东西</div>
+  <p>
+    和第 12 章验收新安全网的办法一样：<strong>故意把期望值改错，看它会不会红。</strong>
+    一个从来没红过的异步测试，你并不知道它有没有在工作。第 14 章的变异测试就是把这件事自动化。
+  </p>
+</div>
+
+<h2 id="time">坏法二：等真实的时间</h2>
+
+<p>
+  重试、超时、防抖、缓存过期、定时任务 —— 这些逻辑的行为就是「隔多久做什么」。如果测试真的去等，一个「重试三次、间隔翻倍」的测试就要花上几百毫秒甚至几十秒，
+  而且在一台繁忙的 CI 机器上，「等 100 毫秒」可能实际过了 180 毫秒，测试时红时绿。
+</p>
+
+<p>
+  第 11 章已经给出了思路：<strong>时间是一个依赖，把它显式地传进来。</strong>那一章处理的是「现在几点」，这里处理的是「等一会儿」。
+  例子是一个带指数退避的重试函数：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public final class Retry {
+    public interface Sleeper {                       // 「等一会儿」这个动作，做成接口
+        void sleep(Duration duration);
+    }
+
+    public static class TransientException extends RuntimeException {}
+
+    public static &lt;T&gt; T run(Supplier&lt;T&gt; operation, int attempts,
+                            Duration baseDelay, Sleeper sleeper) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return operation.get();
+            } catch (TransientException e) {
+                if (attempt == attempts) throw e;
+                sleeper.sleep(baseDelay.multipliedBy(1L &lt;&lt; (attempt - 1)));   // 100、200、400……
+            }
+        }
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class TransientError(Exception):
+    pass
+
+
+async def retry(operation, attempts=3, base_delay=0.1, sleep=asyncio.sleep):
+    #                                                   ↑ 「等一会儿」是一个参数，默认用真的
+    for attempt in range(1, attempts + 1):
+        try:
+            return await operation()
+        except TransientError:
+            if attempt == attempts:
+                raise
+            await sleep(base_delay * 2 ** (attempt - 1))    # 0.1、0.2、0.4……
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class TransientError extends Error {}
+
+export type Sleep = (ms: number) =&gt; Promise&lt;void&gt;
+
+const realSleep: Sleep = (ms) =&gt; new Promise((resolve) =&gt; setTimeout(resolve, ms))
+
+export async function retry&lt;T&gt;(
+  operation: () =&gt; Promise&lt;T&gt;,
+  { attempts = 3, baseDelayMs = 100, sleep = realSleep } = {},   // 「等一会儿」是一个参数
+): Promise&lt;T&gt; {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await operation()
+    } catch (error) {
+      if (!(error instanceof TransientError) || attempt === attempts) throw error
+      await sleep(baseDelayMs * 2 ** (attempt - 1))                // 100、200、400……
+    }
+  }
+}
+</pre></div>
+</div>
+
+<p>测试传进去一个<strong>不真的等、只把时长记下来</strong>的替身。整个测试在一毫秒内跑完，而且结果和机器快慢无关：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void retries_until_the_operation_succeeds() {
+    Supplier&lt;String&gt; operation = failingThen(
+        new Retry.TransientException(), new Retry.TransientException(), "ok");
+    List&lt;Duration&gt; delays = new ArrayList&lt;&gt;();
+
+    String result = Retry.run(operation, 3, Duration.ofMillis(100), delays::add);
+
+    assertThat(result).isEqualTo("ok");
+    assertThat(delays).containsExactly(Duration.ofMillis(100), Duration.ofMillis(200));
+}
+
+// 辅助：一个按顺序给出结果的操作，遇到异常对象就抛出
+static &lt;T&gt; Supplier&lt;T&gt; failingThen(Object... outcomes) {
+    Iterator&lt;Object&gt; remaining = List.of(outcomes).iterator();
+    return () -&gt; {
+        Object outcome = remaining.next();
+        if (outcome instanceof RuntimeException e) throw e;
+        @SuppressWarnings("unchecked") T value = (T) outcome;
+        return value;
+    };
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+async def test_retries_until_the_operation_succeeds():
+    operation = failing_then(TransientError(), TransientError(), "ok")
+    delays = []
+
+    async def fake_sleep(seconds):
+        delays.append(seconds)
+
+    result = await retry(operation, attempts=3, base_delay=0.1, sleep=fake_sleep)
+
+    assert result == "ok"
+    assert delays == [0.1, 0.2]
+
+
+# 辅助：一个按顺序给出结果的操作，遇到异常对象就抛出
+def failing_then(*outcomes):
+    remaining = list(outcomes)
+
+    async def operation():
+        outcome = remaining.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    return operation
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('retries until the operation succeeds', async () =&gt; {
+  const operation = failingThen(new TransientError(), new TransientError(), 'ok')
+  const delays: number[] = []
+  const fakeSleep = async (ms: number) =&gt; { delays.push(ms) }
+
+  const result = await retry(operation, { attempts: 3, baseDelayMs: 100, sleep: fakeSleep })
+
+  expect(result).toBe('ok')
+  expect(delays).toEqual([100, 200])
+})
+
+// 辅助：一个按顺序给出结果的操作，遇到异常对象就抛出
+function failingThen&lt;T&gt;(...outcomes: Array&lt;Error | T&gt;): () =&gt; Promise&lt;T&gt; {
+  const remaining = [...outcomes]
+  return async () =&gt; {
+    const outcome = remaining.shift()
+    if (outcome instanceof Error) throw outcome
+    return outcome as T
+  }
+}
+</pre></div>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="真实等待与受控等待的对比：真实等待时测试要花三百毫秒以上，且受机器负载影响；受控等待时替身只记录下 100 和 200 两个数字，测试瞬间完成">
+  <rect class="bx" x="14" y="16" width="356" height="188" rx="12"/>
+  <text class="ttl on-r" x="30" y="42">&#10007; 真的等</text>
+  <rect class="bx-d" x="30" y="58" width="50" height="30" rx="5"/><text class="sm" x="55" y="78" text-anchor="middle">试 1</text>
+  <rect class="bx-r" x="84" y="58" width="70" height="30" rx="5"/><text class="sm on-r" x="119" y="78" text-anchor="middle">100 ms</text>
+  <rect class="bx-d" x="158" y="58" width="50" height="30" rx="5"/><text class="sm" x="183" y="78" text-anchor="middle">试 2</text>
+  <rect class="bx-r" x="212" y="58" width="100" height="30" rx="5"/><text class="sm on-r" x="262" y="78" text-anchor="middle">200 ms</text>
+  <rect class="bx-d" x="316" y="58" width="40" height="30" rx="5"/><text class="sm" x="336" y="78" text-anchor="middle">试 3</text>
+  <text class="sm" x="30" y="118">每跑一次至少 300 毫秒</text>
+  <text class="sm" x="30" y="140">只能断言「总耗时大概在 300 上下」</text>
+  <text class="sm" x="30" y="162">机器一忙，就超出「上下」的范围</text>
+  <text class="sm on-r" x="30" y="188">慢，而且时好时坏</text>
+
+  <rect class="bx" x="390" y="16" width="356" height="188" rx="12"/>
+  <text class="ttl on-g" x="406" y="42">&#10003; 把等待换成记录</text>
+  <rect class="bx-d" x="406" y="58" width="50" height="30" rx="5"/><text class="sm" x="431" y="78" text-anchor="middle">试 1</text>
+  <rect class="bx-g" x="460" y="58" width="46" height="30" rx="5"/><text class="sm on-g" x="483" y="78" text-anchor="middle">记 100</text>
+  <rect class="bx-d" x="510" y="58" width="50" height="30" rx="5"/><text class="sm" x="535" y="78" text-anchor="middle">试 2</text>
+  <rect class="bx-g" x="564" y="58" width="46" height="30" rx="5"/><text class="sm on-g" x="587" y="78" text-anchor="middle">记 200</text>
+  <rect class="bx-d" x="614" y="58" width="50" height="30" rx="5"/><text class="sm" x="639" y="78" text-anchor="middle">试 3</text>
+  <text class="sm" x="406" y="118">每跑一次不到 1 毫秒</text>
+  <text class="sm" x="406" y="140">可以精确断言：等了 [100, 200]</text>
+  <text class="sm" x="406" y="162">结果与机器快慢无关</text>
+  <text class="sm on-g" x="406" y="188">快，而且每次都一样</text>
+</svg>
+<figcaption>图 13-4　测试关心的是「决定等多久」，不是「真的等了多久」</figcaption>
+</figure>
+
+<div class="box deep">
+  <div class="t">&#128270; 断言等待时长，算不算测了实现细节</div>
+  <p>
+    看它对谁可见（第 5 章）。重试的间隔决定了你的系统以什么节奏去敲别人的服务 —— 对那个外部系统来说，这是<strong>可观察的行为</strong>，值得钉住。
+    如果只是内部某个缓存「大概隔一阵刷新一次」，具体是 100 还是 120 没人在乎，那就别断言具体数字，只断言最终结果。
+  </p>
+</div>
+
+<h3>另一种办法：假定时器</h3>
+
+<p>
+  JavaScript 生态里更常见的做法是不改函数签名，而是让测试框架<strong>接管全局的定时器</strong>：<code>setTimeout</code> 不再真的计时，由测试手动把时钟往前拨。
+  下面的测试用的是<strong>没传 <code>sleep</code> 参数</strong>的 <code>retry</code>，也就是真实的 <code>setTimeout</code> 版本：
+</p>
+
+<div class="code" data-lang="ts"><pre>
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+
+beforeEach(() =&gt; { vi.useFakeTimers() })
+afterEach(() =&gt; { vi.useRealTimers() })           // 一定要还原，否则会影响别的测试
+
+test('waits 100 ms, then 200 ms, between attempts', async () =&gt; {
+  const operation = vi.fn(failingThen(new TransientError(), new TransientError(), 'ok'))
+
+  const pending = retry(operation)                // 不 await：它会停在第一次等待上
+  await vi.advanceTimersByTimeAsync(0)
+  expect(operation).toHaveBeenCalledTimes(1)
+
+  await vi.advanceTimersByTimeAsync(100)          // 把时钟拨快 100 毫秒
+  expect(operation).toHaveBeenCalledTimes(2)
+
+  await vi.advanceTimersByTimeAsync(200)
+  expect(await pending).toBe('ok')
+})
+</pre></div>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>把等待作为参数传进来</th><th>假定时器</th></tr>
+  <tr><td>要不要改生产代码</td><td>要：多一个参数（有默认值）</td><td>不用</td></tr>
+  <tr><td>测试读起来</td><td>直白：结果 + 等了多久</td><td>要一步步拨时钟，容易写错顺序</td></tr>
+  <tr><td>风险</td><td>几乎没有</td><td>改的是<strong>全局</strong>状态：忘了还原会污染别的测试；第三方库内部的定时器也一起被接管</td></tr>
+  <tr><td>适合</td><td>你自己写的、以时间为核心的逻辑</td><td>改不了签名的代码；防抖、轮询这类到处用 <code>setTimeout</code> 的界面代码</td></tr>
+</table>
+</div>
+
+<p>
+  Python 和 Java 里也有类似的工具（比如能冻结时间的库、可以手动推进的调度器），取舍是一样的：
+  <strong>显式传入更啰嗦但更安全；全局接管更省事但副作用更大。</strong>
+</p>
+
+<h2 id="poll">等一个你控制不了的异步结果</h2>
+
+<p>
+  有时测试没法 <code>await</code> 到结果：被测系统在<strong>后台</strong>处理（消息消费者、后台线程、另一个进程），测试只能从外面看「它做完了没有」。
+  这通常出现在集成测试和端到端测试里。最常见的错误写法是「睡一会儿再看」：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="固定睡眠与轮询的对比。固定睡眠：睡短了结果还没出来测试就失败，睡长了每次都白等。轮询：每隔一小段时间检查一次，条件成立立刻继续，超过上限才失败">
+  <rect class="bx" x="14" y="16" width="356" height="208" rx="12"/>
+  <text class="ttl on-r" x="30" y="42">&#10007; 固定睡 2 秒</text>
+  <path class="ln" d="M30 96 H354"/>
+  <rect class="bx-r" x="30" y="80" width="230" height="32" rx="5"/><text class="sm on-r" x="145" y="101" text-anchor="middle">sleep(2000)</text>
+  <path class="ln-g" style="stroke-width:2.4" d="M96 70 V122"/><text class="sm on-g" x="96" y="64" text-anchor="middle">平时 0.3 秒就好了</text>
+  <path class="ln-r" style="stroke-width:2.4" d="M320 70 V122"/><text class="sm on-r" x="300" y="140" text-anchor="middle">CI 忙时 2.6 秒才好</text>
+  <text class="sm" x="30" y="170">平时：每次白等 1.7 秒</text>
+  <text class="sm" x="30" y="190">偶尔：还没好就去断言 &rarr; 红</text>
+  <text class="sm on-r" x="30" y="212">又慢又不稳，两头都不讨好</text>
+
+  <rect class="bx" x="390" y="16" width="356" height="208" rx="12"/>
+  <text class="ttl on-g" x="406" y="42">&#10003; 轮询，最多等 5 秒</text>
+  <path class="ln" d="M406 96 H730"/>
+  <g class="ln-b" style="stroke-width:2">
+    <path d="M416 84 V108"/><path d="M436 84 V108"/><path d="M456 84 V108"/>
+  </g>
+  <path class="ln-g" style="stroke-width:2.6" d="M476 78 V114"/>
+  <text class="sm on-b" x="436" y="72" text-anchor="middle">好了吗？</text>
+  <text class="sm on-g" x="520" y="132" text-anchor="middle">好了 &rarr; 立刻继续</text>
+  <path class="ln-d" d="M700 78 V114" style="stroke:var(--red);stroke-dasharray:4 3;fill:none"/>
+  <text class="sm on-r" x="700" y="72" text-anchor="middle">上限</text>
+  <text class="sm" x="406" y="170">平时：0.3 秒就继续，不白等</text>
+  <text class="sm" x="406" y="190">偶尔慢：上限留得宽，照样能过</text>
+  <text class="sm on-g" x="406" y="212">真出问题：到上限才失败，并说清在等什么</text>
+</svg>
+<figcaption>图 13-5　固定睡眠要你猜一个数；轮询不用猜</figcaption>
+</figure>
+
+<div class="tabs">
+<div class="code" data-lang="ts"><pre>
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+
+beforeEach(() =&gt; { vi.useFakeTimers() })
+afterEach(() =&gt; { vi.useRealTimers() })           // 一定要还原，否则会影响别的测试
+
+test('waits 100 ms, then 200 ms, between attempts', async () =&gt; {
+  const operation = vi.fn(failingThen(new TransientError(), new TransientError(), 'ok'))
+
+  const pending = retry(operation)                // 不 await：它会停在第一次等待上
+  await vi.advanceTimersByTimeAsync(0)
+  expect(operation).toHaveBeenCalledTimes(1)
+
+  await vi.advanceTimersByTimeAsync(100)          // 把时钟拨快 100 毫秒
+  expect(operation).toHaveBeenCalledTimes(2)
+
+  await vi.advanceTimersByTimeAsync(200)
+  expect(await pending).toBe('ok')
+})
+</pre></div>
+<div class="code" data-lang="java"><pre>
+// 依赖：org.awaitility:awaitility
+import static org.awaitility.Awaitility.await;
+
+@Test
+void the_message_is_eventually_sent() {
+    startBackgroundWork();                         // 结果会在后台某个时刻出现在 sent 里
+
+    await().atMost(Duration.ofSeconds(2)).untilAsserted(
+        () -&gt; assertThat(sent).containsExactly("msg"));
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+async def eventually(predicate, timeout=2.0, interval=0.01):
+    """反复检查，直到条件成立；超过 timeout 就失败。"""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() &gt; deadline:
+            raise AssertionError(f"条件在 {timeout} 秒内没有成立")
+        await asyncio.sleep(interval)
+
+
+async def test_the_message_is_eventually_sent():
+    start_background_work()                        # 结果会在后台某个时刻出现在 sent 里
+
+    await eventually(lambda: len(sent) == 1)
+
+    assert sent == ["msg"]
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('the message is eventually sent', async () =&gt; {
+  startBackgroundWork()                            // 结果会在后台某个时刻出现在 sent 里
+
+  await vi.waitFor(
+    () =&gt; expect(sent).toEqual(['msg']),
+    { timeout: 2000, interval: 10 })
+})
+</pre></div>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 轮询是退路，不是首选</div>
+  <p>
+    能 <code>await</code> 到结果就直接 <code>await</code>（上一节）；能把时间换成替身就换（再上一节）。
+    只有当异步发生在<strong>你插不进手的地方</strong>时才轮询。它仍然依赖真实时间，只是把「猜一个数」换成了「设一个宽松的上限」。
+    另外，轮询只能验证「某件事<strong>发生了</strong>」；要验证「某件事<strong>没有发生</strong>」，它帮不上忙 —— 那需要你能确定地知道处理已经结束。
+  </p>
+</div>
+
+<h2 id="race">坏法三：并发与竞态条件</h2>
+
+<div class="term">
+  <b class="w">竞态条件（race condition）</b>
+  <p>程序的结果取决于几个并发操作<strong>谁先谁后</strong>，而这个顺序不由你的代码决定。大多数时候顺序「碰巧」是对的，所以这类 Bug 在开发时不出现，在生产环境的高峰期出现。</p>
+</div>
+
+<p>最典型的是<strong>丢失更新</strong>：「先读、再判断、再写」这三步之间被别人插了进来。下面是一个取款操作：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class Account {
+    public interface Store {
+        int read();
+        void write(int balance);
+    }
+
+    private final Store store;
+
+    public Account(Store store) { this.store = store; }
+
+    public void withdraw(int amount) {
+        int balance = store.read();                    // ① 读
+        if (balance &lt; amount) throw new InsufficientFunds();   // ② 判断
+        store.write(balance - amount);                 // ③ 写
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class Account:
+    def __init__(self, store) -&gt; None:
+        self._store = store
+
+    async def withdraw(self, amount: int) -&gt; None:
+        balance = await self._store.read()             # ① 读
+        if balance &lt; amount:                           # ② 判断
+            raise InsufficientFunds()
+        await self._store.write(balance - amount)      # ③ 写
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class Account {
+  constructor(private readonly store: Store) {}
+
+  async withdraw(amount: number): Promise&lt;void&gt; {
+    const balance = await this.store.read()            // ① 读
+    if (balance &lt; amount) throw new InsufficientFunds()    // ② 判断
+    await this.store.write(balance - amount)           // ③ 写
+  }
+}
+</pre></div>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="丢失更新的时间线：余额 100。取款甲读到 100，取款乙也读到 100，两者都判断余额足够；甲写入 40，乙也写入 40。两笔各取 60 都成功了，余额却是 40 而不是出现一笔失败">
+  <text class="lbl" x="30" y="30">余额</text>
+  <rect class="bx" x="90" y="12" width="60" height="28" rx="6"/><text class="lbl" x="120" y="31" text-anchor="middle">100</text>
+  <rect class="bx" x="470" y="12" width="60" height="28" rx="6"/><text class="lbl" x="500" y="31" text-anchor="middle">40</text>
+  <rect class="bx-r" x="620" y="12" width="60" height="28" rx="6"/><text class="lbl on-r" x="650" y="31" text-anchor="middle">40</text>
+  <path class="ln" style="stroke-dasharray:4 4" d="M152 26 H466 M532 26 H616"/>
+
+  <text class="lbl on-b" x="30" y="92">取款甲</text>
+  <text class="sm" x="30" y="110">取 60</text>
+  <path class="ln-b" d="M90 90 H720"/>
+  <rect class="bx-b" x="170" y="74" width="92" height="32" rx="6"/><text class="sm on-b" x="216" y="95" text-anchor="middle">读到 100</text>
+  <rect class="bx-b" x="330" y="74" width="80" height="32" rx="6"/><text class="sm on-b" x="370" y="95" text-anchor="middle">够，继续</text>
+  <rect class="bx-b" x="450" y="74" width="92" height="32" rx="6"/><text class="sm on-b" x="496" y="95" text-anchor="middle">写入 40</text>
+  <path class="ln-b" d="M496 72 V44" marker-end="url(#ar-b)"/>
+
+  <text class="lbl on-p" x="30" y="172">取款乙</text>
+  <text class="sm" x="30" y="190">取 60</text>
+  <path class="ln-p" d="M90 170 H720"/>
+  <rect class="bx-p" x="230" y="154" width="92" height="32" rx="6"/><text class="sm on-p" x="276" y="175" text-anchor="middle">读到 100</text>
+  <rect class="bx-p" x="390" y="154" width="80" height="32" rx="6"/><text class="sm on-p" x="430" y="175" text-anchor="middle">够，继续</text>
+  <rect class="bx-p" x="604" y="154" width="92" height="32" rx="6"/><text class="sm on-p" x="650" y="175" text-anchor="middle">写入 40</text>
+  <path class="ln-p" d="M650 152 V44" marker-end="url(#ar-p)"/>
+
+  <rect class="bx-r" x="170" y="212" width="152" height="40" rx="8" style="fill:none;stroke-dasharray:5 4"/>
+  <text class="sm on-r" x="246" y="237" text-anchor="middle">两边读到的是同一个旧值</text>
+  <path class="ln-r" d="M246 210 V190" marker-end="url(#ar-r)"/>
+  <text class="sm on-r" x="540" y="237" text-anchor="middle">取走了 120，账上只少了 60；本该有一笔被拒绝</text>
+</svg>
+<figcaption>图 13-6　丢失更新：两个操作的「读」都发生在对方的「写」之前</figcaption>
+</figure>
+
+<h3>为它写一个能稳定重现的测试</h3>
+
+<p>
+  先把期望说清楚 —— 这是业务规则，和并发技术无关：<strong>余额 100，同时来两笔各取 60 的请求，应该恰好一笔成功、一笔因余额不足被拒，最后余额 40。</strong>
+</p>
+
+<p>怎么让测试「稳定地」撞上那个糟糕的顺序，取决于你的运行环境属于哪一种：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="两种并发模型。单线程事件循环：任务只在 await 处交出控制权，切换点是确定的，因此可以写出每次都重现问题的测试。多线程：线程可能在任何一条指令处被切换，切换点不确定，只能靠大量重复来提高撞上问题的概率，或者用闸门强行安排顺序">
+  <rect class="bx" x="14" y="16" width="356" height="218" rx="12"/>
+  <text class="ttl" x="30" y="42">单线程事件循环</text>
+  <text class="sm" x="30" y="62">Python asyncio · JavaScript</text>
+  <rect class="bx-b" x="30" y="80" width="70" height="26" rx="5"/><text class="sm on-b" x="65" y="98" text-anchor="middle">甲</text>
+  <rect class="bx-p" x="104" y="80" width="70" height="26" rx="5"/><text class="sm on-p" x="139" y="98" text-anchor="middle">乙</text>
+  <rect class="bx-b" x="178" y="80" width="70" height="26" rx="5"/><text class="sm on-b" x="213" y="98" text-anchor="middle">甲</text>
+  <rect class="bx-p" x="252" y="80" width="70" height="26" rx="5"/><text class="sm on-p" x="287" y="98" text-anchor="middle">乙</text>
+  <g class="ln-a" style="stroke-width:2.2"><path d="M102 72 V114"/><path d="M176 72 V114"/><path d="M250 72 V114"/></g>
+  <text class="sm on-a" x="176" y="132" text-anchor="middle">只在 await 处切换</text>
+  <text class="sm" x="30" y="162">切换点是确定的：同样的代码、同样的替身，</text>
+  <text class="sm" x="30" y="180">每次的交错顺序都一样</text>
+  <text class="sm on-g" x="30" y="212">&rarr; 可以写出每次都重现问题的测试</text>
+
+  <rect class="bx" x="390" y="16" width="356" height="218" rx="12"/>
+  <text class="ttl" x="406" y="42">多线程</text>
+  <text class="sm" x="406" y="62">Java 线程 · Python 线程 · 多个进程 · 多个服务实例</text>
+  <rect class="bx-b" x="406" y="80" width="34" height="26" rx="5"/>
+  <rect class="bx-p" x="442" y="80" width="88" height="26" rx="5"/>
+  <rect class="bx-b" x="532" y="80" width="56" height="26" rx="5"/>
+  <rect class="bx-p" x="590" y="80" width="22" height="26" rx="5"/>
+  <rect class="bx-b" x="614" y="80" width="84" height="26" rx="5"/>
+  <text class="sm on-a" x="552" y="132" text-anchor="middle">可能在任何一条指令处切换</text>
+  <text class="sm" x="406" y="162">切换点由操作系统决定，每次不同</text>
+  <text class="sm" x="406" y="180">同一个测试，这次撞上了，下次可能没有</text>
+  <text class="sm on-a" x="406" y="212">&rarr; 靠大量重复提高概率，或用「闸门」安排顺序</text>
+</svg>
+<figcaption>图 13-7　能不能「稳定重现」，取决于切换点是否确定</figcaption>
+</figure>
+
+<p>
+  <strong>Python 和 TypeScript</strong>：给被测对象一个<strong>每次读写都让出一次控制权</strong>的内存存储（真实的 I/O 就是这样），再同时发起两笔取款。
+  交错顺序是确定的 —— 两个「读」一定都排在第一个「写」前面 —— 所以这个测试对上面那段有 Bug 的代码<strong>每次都红</strong>（实测）。
+</p>
+<p>
+  <strong>Java</strong>：线程的切换点不确定，这里用的是<strong>压力测试</strong> —— 8 个线程同时起跑，各取 1000 次 1 块钱，总额正好是初始余额，最后应该归零。
+  只要有一次更新被覆盖，余额就不是 0。它对有 Bug 的代码实测每次都红，但要明白这是<strong>概率很高</strong>，不是<strong>保证</strong>。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+static class InMemoryStore implements Account.Store {
+    volatile int balance;
+    InMemoryStore(int balance) { this.balance = balance; }
+    public int read() { int b = balance; Thread.yield(); return b; }   // 读完让一下，把竞争窗口撑大
+    public void write(int balance) { this.balance = balance; }
+}
+
+@Test
+void concurrent_withdrawals_never_lose_an_update() throws Exception {
+    int threads = 8, withdrawalsPerThread = 1_000;
+    InMemoryStore store = new InMemoryStore(threads * withdrawalsPerThread);
+    Account account = new Account(store);
+    ExecutorService pool = Executors.newFixedThreadPool(threads);
+    CountDownLatch start = new CountDownLatch(1);
+
+    List&lt;Future&lt;?&gt;&gt; jobs = new ArrayList&lt;&gt;();
+    for (int t = 0; t &lt; threads; t++) {
+        jobs.add(pool.submit(() -&gt; {
+            start.await();                             // 所有线程在同一刻起跑
+            for (int i = 0; i &lt; withdrawalsPerThread; i++) account.withdraw(1);
+            return null;
+        }));
+    }
+    start.countDown();
+    for (Future&lt;?&gt; job : jobs) job.get(10, TimeUnit.SECONDS);   // 在测试线程里等，异常也会在这里抛出
+    pool.shutdown();
+
+    assertThat(store.balance).isEqualTo(0);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class InMemoryStore:
+    """像真实的 I/O 一样：每次读写都让出一次控制权。"""
+
+    def __init__(self, balance: int) -&gt; None:
+        self.balance = balance
+
+    async def read(self) -&gt; int:
+        await asyncio.sleep(0)
+        return self.balance
+
+    async def write(self, balance: int) -&gt; None:
+        await asyncio.sleep(0)
+        self.balance = balance
+
+
+async def test_two_concurrent_withdrawals_cannot_overdraw():
+    store = InMemoryStore(balance=100)
+    account = Account(store)
+
+    results = await asyncio.gather(
+        account.withdraw(60), account.withdraw(60), return_exceptions=True)
+
+    failures = [r for r in results if isinstance(r, InsufficientFunds)]
+    assert len(failures) == 1
+    assert store.balance == 40
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+/** 像真实的 I/O 一样：每次读写都让出一次控制权。 */
+export class InMemoryStore implements Store {
+  constructor(public balance: number) {}
+
+  async read(): Promise&lt;number&gt; {
+    await Promise.resolve()
+    return this.balance
+  }
+
+  async write(balance: number): Promise&lt;void&gt; {
+    await Promise.resolve()
+    this.balance = balance
+  }
+}
+
+test('two concurrent withdrawals cannot overdraw', async () =&gt; {
+  const store = new InMemoryStore(100)
+  const account = new Account(store)
+
+  const results = await Promise.allSettled([
+    account.withdraw(60), account.withdraw(60)])
+
+  const failures = results.filter(
+    (r) =&gt; r.status === 'rejected' &amp;&amp; r.reason instanceof InsufficientFunds)
+  expect(failures).toHaveLength(1)
+  expect(store.balance).toBe(40)
+})
+</pre></div>
+</div>
+
+<p>在有 Bug 的代码上，实测的失败信息是这样的 —— 两笔都成功了，或者有上千次更新丢了：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-hl="text"><pre>
+expected: 0
+ but was: 6441
+</pre></div>
+<div class="code" data-lang="python" data-hl="text"><pre>
+&gt;       assert len(failures) == 1
+E       assert 0 == 1
+E        +  where 0 = len([])
+</pre></div>
+<div class="code" data-lang="ts" data-hl="text"><pre>
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+</pre></div>
+</div>
+
+<h3>修复：让「读 — 判断 — 写」不可被打断</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class SafeAccount extends Account {
+    public SafeAccount(Store store) { super(store); }
+
+    @Override
+    public synchronized void withdraw(int amount) {    // 同一时刻只让一个线程进来
+        super.withdraw(amount);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class SafeAccount:
+    def __init__(self, store) -&gt; None:
+        self._store = store
+        self._lock = asyncio.Lock()
+
+    async def withdraw(self, amount: int) -&gt; None:
+        async with self._lock:                          # 同一时刻只让一个任务进来
+            balance = await self._store.read()
+            if balance &lt; amount:
+                raise InsufficientFunds()
+            await self._store.write(balance - amount)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class SafeAccount {
+  private queue: Promise&lt;unknown&gt; = Promise.resolve()
+
+  constructor(private readonly store: Store) {}
+
+  withdraw(amount: number): Promise&lt;void&gt; {
+    const run = this.queue.then(() =&gt; this.doWithdraw(amount))   // 排在上一笔后面
+    this.queue = run.catch(() =&gt; undefined)        // 上一笔失败不影响下一笔排队
+    return run
+  }
+
+  private async doWithdraw(amount: number): Promise&lt;void&gt; {
+    const balance = await this.store.read()
+    if (balance &lt; amount) throw new InsufficientFunds()
+    await this.store.write(balance - amount)
+  }
+}
+</pre></div>
+</div>
+
+<p>同一个测试，换成修复后的类，三种语言都稳定通过（实测）。</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 进程里的锁只管得住这一个进程</div>
+  <p>
+    上面的锁保护的是<strong>内存里</strong>的状态。真实系统里余额存在数据库，而你的服务往往同时跑着好几个实例 —— 进程内的锁对别的实例毫无约束力。
+    这时要靠数据库来保证：把「判断并扣减」写成一条语句（<code>UPDATE … SET balance = balance - 60 WHERE balance &gt;= 60</code>）、
+    行锁（<code>SELECT … FOR UPDATE</code>）、或者带版本号的乐观锁。
+  </p>
+  <p>
+    配套示例里就有这个隐患：控制器先读出公司的员工数，在内存里加减，再整个写回去。两个请求同时修改两个用户的邮箱，员工数可能只变一次。
+    原书没有处理这一点，示例也照原样保留了。
+  </p>
+</div>
+
+<div class="box key">
+  <div class="t">&#9733; 数据库层面的并发，用集成测试来测</div>
+  <p>
+    按第 8 章的分类，数据库是受管依赖，要用真的。验证「两个事务同时改同一行会怎样」的测试，就是一个开两个连接的集成测试：
+    事务甲读、事务乙读、甲提交、乙提交，然后断言结果。顺序由测试代码一步步安排，所以它是<strong>确定的</strong>，不需要压力测试。
+    用内存里的假仓储测不出这类问题 —— 假仓储没有事务隔离级别。
+  </p>
+</div>
+
+<h3>压力测试该不该进日常的测试集</h3>
+
+<div class="tw">
+<table>
+  <tr><th>办法</th><th>确定吗</th><th>适合放在哪</th></tr>
+  <tr><td>单线程事件循环 + 会让出控制权的替身</td><td>确定</td><td>普通单元测试，随时跑</td></tr>
+  <tr><td>两个数据库事务，由测试安排先后</td><td>确定</td><td>集成测试</td></tr>
+  <tr><td>多线程压力测试</td><td>不确定：通过只说明「这次没撞上」</td><td>可以进测试集，但要控制规模（几十毫秒级）；它红了一定是真问题，绿了不保证没问题</td></tr>
+  <tr><td>专门的并发测试工具（能系统地枚举线程交错顺序）</td><td>确定</td><td>无锁数据结构这类高风险代码；一般业务代码用不上</td></tr>
+</table>
+</div>
+
+<p>
+  和核心 / 外壳的思路一样，最省事的并发测试是<strong>不需要写的那种</strong>：不共享可变状态（每个请求用自己的对象）、把状态的修改交给数据库的一条原子语句、
+  或者让所有修改排队经过同一个入口。能用设计消掉的竞态，就别留给测试去抓。
+</p>
+
+<h2 id="flaky">时好时坏的测试</h2>
+
+<div class="term">
+  <b class="w">不稳定测试（flaky test）</b>
+  <p>代码一行没改，同一个测试有时通过、有时失败。</p>
+</div>
+
+<p>
+  它直接破坏第 4 章的第二根支柱。那一章说，<strong>假警报</strong>的代价是大家不再相信红色 ——「又是那个测试，重跑一下」。
+  一旦养成这个习惯，真正的回归也会被重跑掉。所以不稳定的测试不是「小毛病」，要当成缺陷处理。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="不稳定测试的五类常见原因及对应办法：依赖真实时间，把时间换成替身；固定睡眠等异步结果，改成 await 或轮询；并发顺序不确定，让顺序可控；测试之间共享状态，每个测试自己准备数据；依赖外部服务或网络，在系统边缘替换">
+  <text class="ttl" x="180" y="24" text-anchor="middle">原因</text>
+  <text class="ttl" x="570" y="24" text-anchor="middle">办法</text>
+
+  <rect class="bx-r" x="30" y="38" width="300" height="40" rx="8"/><text class="lbl on-r" x="46" y="63">依赖真实时间：当前时刻、时区、耗时</text>
+  <rect class="bx-g" x="410" y="38" width="320" height="40" rx="8"/><text class="lbl on-g" x="426" y="63">把时间作为依赖传入（第 11 章、本章）</text>
+  <path class="ln" d="M332 58 H406" marker-end="url(#ar)"/>
+
+  <rect class="bx-r" x="30" y="88" width="300" height="40" rx="8"/><text class="lbl on-r" x="46" y="113">用固定的 sleep 等异步结果</text>
+  <rect class="bx-g" x="410" y="88" width="320" height="40" rx="8"/><text class="lbl on-g" x="426" y="113">await 到结果；不行再用轮询 + 超时</text>
+  <path class="ln" d="M332 108 H406" marker-end="url(#ar)"/>
+
+  <rect class="bx-r" x="30" y="138" width="300" height="40" rx="8"/><text class="lbl on-r" x="46" y="163">并发：结果取决于谁先跑完</text>
+  <rect class="bx-g" x="410" y="138" width="320" height="40" rx="8"/><text class="lbl on-g" x="426" y="163">让顺序可控；断言不依赖完成的先后</text>
+  <path class="ln" d="M332 158 H406" marker-end="url(#ar)"/>
+
+  <rect class="bx-r" x="30" y="188" width="300" height="40" rx="8"/><text class="lbl on-r" x="46" y="213">测试之间共享状态：数据库、全局变量</text>
+  <rect class="bx-g" x="410" y="188" width="320" height="40" rx="8"/><text class="lbl on-g" x="426" y="213">每个测试自己准备数据、开始时清理（第 10 章）</text>
+  <path class="ln" d="M332 208 H406" marker-end="url(#ar)"/>
+
+  <rect class="bx-r" x="30" y="238" width="300" height="40" rx="8"/><text class="lbl on-r" x="46" y="263">依赖外部服务、网络、随机数</text>
+  <rect class="bx-g" x="410" y="238" width="320" height="40" rx="8"/><text class="lbl on-g" x="426" y="263">不受管依赖在边缘替换（第 9 章）；固定随机种子</text>
+  <path class="ln" d="M332 258 H406" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 13-8　不稳定测试的五类原因。前三类是本章的内容</figcaption>
+</figure>
+
+<h3>发现了一个不稳定的测试，怎么办</h3>
+
+<ol class="steps">
+  <li><strong>先别当它是「测试的问题」。</strong>它可能正在告诉你生产代码里有一个真的竞态。上面取款的例子里，时红时绿的测试是对的，错的是代码。</li>
+  <li><strong>想办法稳定地重现。</strong>单独跑一百遍；打乱测试顺序跑；在一台慢的机器上跑。能稳定重现，就成功了一大半。</li>
+  <li><strong>修不了就先隔离，并留下记录。</strong>把它移出阻塞合并的那组测试，开一个工单。不要让它继续在主干上随机地红。</li>
+  <li><strong>隔离不是终点。</strong>隔离区里的测试要么修好放回来，要么删掉。长期躺在隔离区里的测试和没有一样，还多了维护成本（第 1 章）。</li>
+</ol>
+
+<div class="box warn">
+  <div class="t">&#9888; 「失败自动重试三次」是止痛药</div>
+  <p>
+    很多测试框架和 CI 都支持自动重试失败的测试。它能让流水线先绿起来，但也会把真正的竞态一起藏住：一个十次里出错一次的 Bug，重试三次后几乎永远是绿的。
+    如果要用，至少让「重试后才通过」的测试被<strong>单独统计出来</strong>，并且有人负责看。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>异步测试有三种特有的坏法：<strong>该红却绿</strong>（伤防止回归）、<strong>等真实时间</strong>（伤快速反馈）、<strong>时好时坏</strong>（伤信任）。</li>
+  <li>最好的办法在测试之外：<strong>把异步留在外壳</strong>，决策逻辑保持同步。业务规则的测试里不应该出现 <code>await</code>。</li>
+  <li>断言必须发生在框架正在等的那条执行流里：测试函数写成异步的并 <code>await</code> 每个结果；Java 在测试线程里取到值再断言。</li>
+  <li>确认一个异步测试有效的办法：故意把期望值改错，看它会不会红。</li>
+  <li><strong>时间是依赖。</strong>把「等一会儿」作为参数传进来，测试里换成只做记录的替身；或者用假定时器，但记得它改的是全局状态。</li>
+  <li>等一个插不进手的后台结果时，用<strong>轮询 + 超时</strong>，不用固定的 <code>sleep</code>。这是退路，不是首选。</li>
+  <li>竞态条件的期望要按业务规则来写（「恰好一笔成功」）。单线程事件循环里可以稳定重现；多线程下压力测试只能提高概率。</li>
+  <li>进程里的锁管不了别的实例。跨实例的并发靠数据库保证，并用<strong>开两个事务的集成测试</strong>来验证。</li>
+  <li>不稳定的测试是缺陷：先怀疑生产代码，再想办法重现，修不了就隔离并记录。自动重试只是把问题藏起来。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>一个异步测试从写出来那天起就一直是绿的。你怎么判断它是真的在验证，还是「断言根本没被执行」？</summary>
+  <p>把它的期望值故意改错（或者把生产代码改错），再跑一遍。如果还是绿的，说明断言没有在框架等待的执行流里执行 —— 多半是少了 <code>await</code>，或者断言写在了回调里。</p>
+</details>
+<details class="quiz">
+  <summary>同事为了测「缓存 5 分钟后过期」，在测试里写了 <code>sleep(300)</code>，并把这个测试标成「夜间才跑」。有什么更好的做法？</summary>
+  <p>把时间变成缓存的一个依赖（传入时钟，或者用假定时器）。测试里先把时钟设在某一刻、写入缓存，再把时钟拨到 5 分钟之后、断言已过期。测试只要一毫秒，可以随时跑，也不会因为机器慢而出错。</p>
+</details>
+<details class="quiz">
+  <summary>多线程压力测试连续跑了一千次都是绿的。能说明代码没有竞态条件吗？</summary>
+  <p>不能。它只说明这一千次都没撞上那个顺序。压力测试红了一定有问题，绿了却不保证没问题。要更有把握，需要让顺序变得可控（单线程交错、由测试安排的两个事务），或者从设计上去掉共享的可变状态。</p>
+</details>
+<details class="quiz">
+  <summary>为什么「两个请求同时修改公司员工数」这种问题，用内存里的假仓储测不出来？</summary>
+  <p>因为问题出在数据库的事务隔离上：两个事务各自读到旧值，再先后写回。假仓储没有事务、没有隔离级别，行为和真数据库不一样。这正是第 8 章坚持「受管依赖用真的」的原因之一。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>在你的项目里找一个异步测试，把它的期望值改错，确认它会红。再找找有没有把断言写在回调里的测试。</li>
+    <li>搜一下测试代码里的 <code>sleep</code>。每一处问自己：这里是在等一个能 <code>await</code> 的结果，还是在等时间流逝？分别改成 <code>await</code>、轮询或替身。</li>
+    <li>把本章的 <code>Account</code> 和它的并发测试敲一遍，亲眼看它在有 Bug 的版本上变红、在加锁的版本上变绿。然后把锁去掉，改用「让存储提供一个原子的扣减操作」来修复。</li>
+    <li>进阶：给配套示例写一个集成测试，开两个事务同时把两个客户改成员工，看公司的员工数是加了 2 还是加了 1。再想想该怎么修。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 15 章 · 评审 AI 生成的测试 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="15">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 15 章 · 补充</span>
+<h1>评审 AI 生成的测试</h1>
+<p class="lede">
+  现在让 AI 助手「给这个类写测试」，几秒钟就能得到几十个全绿的测试。<strong>写</strong>测试的成本几乎归零了，
+  可第 1 章说的那笔账没变：每个测试都要有人读、有人维护，坏测试的净价值是负的。
+  于是瓶颈从「写」挪到了「判断」。这一章把前面的标尺整理成一份评审清单。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解为什么「照着代码生成的测试」天然容易出某几类毛病</li>
+    <li>认得出四种最常见的坏测试，并能说出它伤的是哪根支柱</li>
+    <li>有一份可以照着走的评审清单，半分钟判断一个测试：留、改、删</li>
+    <li>知道怎么提要求，能让 AI 一开始就写得更好</li>
+    <li>知道哪些测试工作适合交给 AI，哪些判断必须自己做</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<div class="box note">
+  <div class="t">&#9432; 关于这一章</div>
+  <p>
+    本章不是原书内容，是把原书的标尺用到一个原书出版时还不存在的场景上。几点说明：
+  </p>
+  <ul>
+    <li>文中的「坏测试」是<strong>为了演示这几种模式而写的典型样本</strong>，不是某个工具某一次的原始输出。它们都在配套示例上实际运行过，文中的数字是实测结果。</li>
+    <li>AI 工具变化很快，「它现在容易犯什么错」会过时。本章想留下的是<strong>评审的标准</strong> —— 这些标准对人写的测试同样适用，只是现在更用得上。</li>
+    <li>这里的建议是作者的经验之谈，没有对照实验的数据支撑。</li>
+  </ul>
+</div>
+
+<h2 id="why">成本挪到了哪里</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="一个测试在它的生命周期里的成本：写出来、每次运行、每次失败时排查、随代码修改、被后来的人阅读。AI 只把第一项降到了接近零，其余四项原样保留，并且因为测试数量变多而被放大">
+  <text class="ttl" x="380" y="24" text-anchor="middle">一个测试一辈子的成本（第 1 章）</text>
+  <rect class="bx-g" x="14" y="44" width="136" height="80" rx="10"/>
+  <text class="lbl on-g" x="82" y="72" text-anchor="middle">写出来</text>
+  <text class="sm" x="82" y="94" text-anchor="middle">以前：几分钟</text>
+  <text class="sm on-g" x="82" y="112" text-anchor="middle">现在：几秒钟</text>
+
+  <rect class="bx" x="162" y="44" width="136" height="80" rx="10"/>
+  <text class="lbl" x="230" y="72" text-anchor="middle">每次运行</text>
+  <text class="sm" x="230" y="94" text-anchor="middle">占用反馈时间</text>
+  <text class="sm" x="230" y="112" text-anchor="middle">没变</text>
+
+  <rect class="bx" x="310" y="44" width="136" height="80" rx="10"/>
+  <text class="lbl" x="378" y="72" text-anchor="middle">每次变红时排查</text>
+  <text class="sm" x="378" y="94" text-anchor="middle">真问题，还是假警报？</text>
+  <text class="sm" x="378" y="112" text-anchor="middle">没变</text>
+
+  <rect class="bx" x="458" y="44" width="136" height="80" rx="10"/>
+  <text class="lbl" x="526" y="72" text-anchor="middle">随代码一起修改</text>
+  <text class="sm" x="526" y="94" text-anchor="middle">重构时要不要跟着改</text>
+  <text class="sm" x="526" y="112" text-anchor="middle">没变</text>
+
+  <rect class="bx" x="606" y="44" width="140" height="80" rx="10"/>
+  <text class="lbl" x="676" y="72" text-anchor="middle">被后来的人读</text>
+  <text class="sm" x="676" y="94" text-anchor="middle">它在说明什么行为？</text>
+  <text class="sm" x="676" y="112" text-anchor="middle">没变</text>
+
+  <path class="ln-a" d="M162 144 H746"/>
+  <path class="ln-a" d="M162 138 V150 M746 138 V150"/>
+  <text class="sm on-a" x="454" y="170" text-anchor="middle">这四项原样保留 —— 而且测试的数量多了几倍，总量跟着放大</text>
+  <text class="sm" x="380" y="202" text-anchor="middle">所以问题从「怎么写得快」变成了「<tspan font-weight="700">哪些值得留下</tspan>」</text>
+</svg>
+<figcaption>图 15-1　AI 降低的只是第一项成本</figcaption>
+</figure>
+
+<h2 id="mirror">为什么照着代码生成的测试容易出问题</h2>
+
+<p>
+  最常见的用法是：选中一段代码，说「给它写测试」。这时 AI 手上<strong>唯一的信息来源就是这段代码</strong>。
+  它不知道需求是什么，只能从实现反推「这段代码应该做什么」—— 反推出来的结论当然是：<strong>它应该做它现在做的事</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="两种信息流向。独立的测试：需求分别流向代码和测试，测试是对代码的独立核对，两边不一致时能发现错误。镜像的测试：需求只流向代码，测试是从代码推出来的，代码错了测试跟着错，两边永远一致">
+  <rect class="bx" x="14" y="16" width="356" height="218" rx="12"/>
+  <text class="ttl on-g" x="30" y="42">&#10003; 测试是独立的核对</text>
+  <rect class="bx-b" x="132" y="58" width="120" height="36" rx="8"/><text class="lbl on-b" x="192" y="81" text-anchor="middle">需求 / 规则</text>
+  <path class="ln" d="M160 96 L104 132" marker-end="url(#ar)"/>
+  <path class="ln" d="M224 96 L280 132" marker-end="url(#ar)"/>
+  <rect class="bx" x="40" y="136" width="120" height="36" rx="8"/><text class="lbl" x="100" y="159" text-anchor="middle">生产代码</text>
+  <rect class="bx-g" x="224" y="136" width="120" height="36" rx="8"/><text class="lbl on-g" x="284" y="159" text-anchor="middle">测试</text>
+  <path class="ln-g" d="M222 154 H164" marker-end="url(#ar-g)" marker-start="url(#ar-g)"/>
+  <text class="sm on-g" x="192" y="148" text-anchor="middle">核对</text>
+  <text class="sm" x="192" y="200" text-anchor="middle">两条独立的路径：代码理解错了，</text>
+  <text class="sm" x="192" y="218" text-anchor="middle">测试会和它对不上</text>
+
+  <rect class="bx" x="390" y="16" width="356" height="218" rx="12"/>
+  <text class="ttl on-r" x="406" y="42">&#10007; 测试是代码的镜像</text>
+  <rect class="bx-b" x="508" y="58" width="120" height="36" rx="8"/><text class="lbl on-b" x="568" y="81" text-anchor="middle">需求 / 规则</text>
+  <path class="ln" d="M536 96 L480 132" marker-end="url(#ar)"/>
+  <rect class="bx" x="416" y="136" width="120" height="36" rx="8"/><text class="lbl" x="476" y="159" text-anchor="middle">生产代码</text>
+  <rect class="bx-r" x="600" y="136" width="120" height="36" rx="8"/><text class="lbl on-r" x="660" y="159" text-anchor="middle">测试</text>
+  <path class="ln-r" d="M538 154 H596" marker-end="url(#ar-r)"/>
+  <text class="sm on-r" x="567" y="148" text-anchor="middle">照着写</text>
+  <text class="sm" x="568" y="200" text-anchor="middle">只有一条路径：代码错了，</text>
+  <text class="sm" x="568" y="218" text-anchor="middle">测试把这个错误当成「期望」记了下来</text>
+</svg>
+<figcaption>图 15-2　测试的价值来自它是一条<strong>独立于实现</strong>的信息来源</figcaption>
+</figure>
+
+<p>
+  这种测试有个正式的名字，第 12 章已经见过：<strong>特征测试</strong> —— 记录代码「现在做什么」，而不是「应该做什么」。
+  在给遗留代码搭脚手架时它正合适；但把它当成新功能的正式测试留下来，就会带来下面这些毛病。
+</p>
+
+<h2 id="patterns">四种最常见的毛病</h2>
+
+<p>下面四个测试针对的都是配套示例里的 <code>User.changeEmail</code>。它们<strong>全都通过</strong>，乍一看也都像模像样。</p>
+
+<h3>① 把实现抄进测试</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void changeEmail_updates_type_and_employee_count() {
+    Company company = new Company("mycorp.com", 5);
+    User user = new User(1, "user@gmail.com", UserType.CUSTOMER, false);
+    String newEmail = "new@mycorp.com";
+    UserType expectedType = newEmail.split("@")[1].equals(company.getDomainName())
+        ? UserType.EMPLOYEE
+        : UserType.CUSTOMER;
+    int delta = expectedType == UserType.EMPLOYEE ? 1 : -1;
+    int expectedCount = company.getNumberOfEmployees() + delta;
+
+    user.changeEmail(newEmail, company);
+
+    assertThat(user.getType()).isEqualTo(expectedType);
+    assertThat(company.getNumberOfEmployees()).isEqualTo(expectedCount);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_change_email_updates_type_and_employee_count():
+    company = Company("mycorp.com", 5)
+    user = User(1, "user@gmail.com", UserType.CUSTOMER, False)
+    new_email = "new@mycorp.com"
+    expected_type = (UserType.EMPLOYEE
+                     if new_email.split("@")[1] == company.domain_name
+                     else UserType.CUSTOMER)
+    delta = 1 if expected_type == UserType.EMPLOYEE else -1
+    expected_count = company.number_of_employees + delta
+
+    user.change_email(new_email, company)
+
+    assert user.type == expected_type
+    assert company.number_of_employees == expected_count
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changeEmail updates type and employee count', () =&gt; {
+  const company = new Company('mycorp.com', 5)
+  const user = new User(1, 'user@gmail.com', UserType.Customer, false)
+  const newEmail = 'new@mycorp.com'
+  const expectedType = newEmail.split('@')[1] === company.domainName
+    ? UserType.Employee
+    : UserType.Customer
+  const delta = expectedType === UserType.Employee ? 1 : -1
+  const expectedCount = company.numberOfEmployees + delta
+
+  user.changeEmail(newEmail, company)
+
+  expect(user.type).toBe(expectedType)
+  expect(company.numberOfEmployees).toBe(expectedCount)
+})
+</pre></div>
+</div>
+
+<p>
+  <strong>怎么认：</strong>准备阶段里出现了条件判断、字符串处理或算术，而且长得和生产代码很像。期望值是<strong>算出来的</strong>，不是<strong>写出来的</strong>。<br>
+  <strong>问题：</strong>这是第 11 章的「把领域知识泄漏进测试」。测试和代码用的是同一套算法，算法有错就一起错 ——
+  第 14 章发现的那个 <code>split("@")[1]</code> 的缺陷，在这个测试里被原样复制了一份。它读起来也费劲：读者得在脑子里把算法跑一遍才知道期望的是什么。<br>
+  <strong>改法：</strong>把期望值直接写成字面量：类型是 <code>EMPLOYEE</code>，员工数是 <code>6</code>。
+</p>
+
+<h3>② 断言什么都没验证</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void changeEmail_works() {
+    Company company = new Company("mycorp.com", 5);
+    User user = new User(1, "user@gmail.com", UserType.CUSTOMER, false);
+
+    user.changeEmail("new@mycorp.com", company);
+
+    assertThat(user).isNotNull();
+    assertThat(user.getEmail()).isNotNull();
+    assertThat(user.getDomainEvents()).isNotEmpty();
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_change_email_works():
+    company = Company("mycorp.com", 5)
+    user = User(1, "user@gmail.com", UserType.CUSTOMER, False)
+
+    user.change_email("new@mycorp.com", company)
+
+    assert user is not None
+    assert user.email is not None
+    assert len(user.domain_events) &gt; 0
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changeEmail works', () =&gt; {
+  const company = new Company('mycorp.com', 5)
+  const user = new User(1, 'user@gmail.com', UserType.Customer, false)
+
+  user.changeEmail('new@mycorp.com', company)
+
+  expect(user).toBeDefined()
+  expect(user.email).toBeTruthy()
+  expect(user.domainEvents.length).toBeGreaterThan(0)
+})
+</pre></div>
+</div>
+
+<p>
+  <strong>怎么认：</strong>断言是「不为空」「不为 null」「长度大于 0」「没有抛异常」这一类；测试名里是 <code>works</code>、<code>success</code>、<code>test1</code>。<br>
+  <strong>问题：</strong>第 1 章的「没有断言的测试」的变体。代码被执行了，覆盖率有了，但邮箱改成了什么、类型对不对、员工数变没变，一样都没验证。<br>
+  <strong>改法：</strong>断言具体的结果。如果说不出该断言什么，说明还没想清楚这个测试要验证哪个行为。
+</p>
+
+<h3>③ 测试琐碎的代码</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void user_constructor_sets_fields() {
+    User user = new User(1, "user@gmail.com", UserType.CUSTOMER, false);
+
+    assertThat(user.getUserId()).isEqualTo(1);
+    assertThat(user.getEmail()).isEqualTo("user@gmail.com");
+    assertThat(user.getType()).isEqualTo(UserType.CUSTOMER);
+    assertThat(user.isEmailConfirmed()).isFalse();
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_user_constructor_sets_fields():
+    user = User(1, "user@gmail.com", UserType.CUSTOMER, False)
+
+    assert user.user_id == 1
+    assert user.email == "user@gmail.com"
+    assert user.type == UserType.CUSTOMER
+    assert user.is_email_confirmed is False
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('User constructor sets fields', () =&gt; {
+  const user = new User(1, 'user@gmail.com', UserType.Customer, false)
+
+  expect(user.userId).toBe(1)
+  expect(user.email).toBe('user@gmail.com')
+  expect(user.type).toBe(UserType.Customer)
+  expect(user.isEmailConfirmed).toBe(false)
+})
+</pre></div>
+</div>
+
+<p>
+  <strong>怎么认：</strong>被测的是构造函数、取值方法、一行的转发。测试的数量和类里方法的数量差不多 —— 「每个方法一个测试」。<br>
+  <strong>问题：</strong>第 7 章四象限的右下角：琐碎代码，不值得测。它几乎不可能出错，这个测试也就几乎没有防止回归的价值，却要你一直维护。
+  AI 生成的测试集里，这一类往往占了大头，把真正重要的那几个淹没在里面。<br>
+  <strong>改法：</strong>删掉。这些字段会被真正验证行为的测试顺带用到。
+</p>
+
+<h3>④ 把领域对象也 Mock 掉，然后验证内部调用</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void changeEmail_calls_company() {
+    Company company = mock(Company.class);
+    when(company.isEmailCorporate("new@mycorp.com")).thenReturn(true);
+    User user = new User(1, "user@gmail.com", UserType.CUSTOMER, false);
+
+    user.changeEmail("new@mycorp.com", company);
+
+    verify(company).isEmailCorporate("new@mycorp.com");
+    verify(company).changeNumberOfEmployees(1);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_change_email_calls_company():
+    company = Mock(spec=Company)
+    company.is_email_corporate.return_value = True
+    user = User(1, "user@gmail.com", UserType.CUSTOMER, False)
+
+    user.change_email("new@mycorp.com", company)
+
+    company.is_email_corporate.assert_called_once_with("new@mycorp.com")
+    company.change_number_of_employees.assert_called_once_with(1)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changeEmail calls company', () =&gt; {
+  const company = new Company('mycorp.com', 5)
+  const isEmailCorporate = vi.spyOn(company, 'isEmailCorporate').mockReturnValue(true)
+  const changeNumberOfEmployees = vi.spyOn(company, 'changeNumberOfEmployees')
+  const user = new User(1, 'user@gmail.com', UserType.Customer, false)
+
+  user.changeEmail('new@mycorp.com', company)
+
+  expect(isEmailCorporate).toHaveBeenCalledExactlyOnceWith('new@mycorp.com')
+  expect(changeNumberOfEmployees).toHaveBeenCalledExactlyOnceWith(1)
+})
+</pre></div>
+</div>
+
+<p>
+  <strong>怎么认：</strong>被 Mock 的是你自己的类（领域对象、仓储），断言是「某某方法被调用了一次」。<br>
+  <strong>问题：</strong>第 5 章的核心：<code>User</code> 和 <code>Company</code> 之间怎么配合是<strong>系统内部的通信</strong>，是实现细节。
+  这个测试钉住的不是「员工数变成了多少」，而是「<code>User</code> 通过哪两个方法去找 <code>Company</code>」。它伤的是第二根支柱，抗重构。<br>
+  <strong>改法：</strong>用真的 <code>Company</code>，断言最终状态。Mock 只留给不受管的进程外依赖（第 8 章）。
+</p>
+
+<h3>其他常见的</h3>
+
+<div class="tw">
+<table>
+  <tr><th>毛病</th><th>怎么认</th><th>对应章节</th></tr>
+  <tr><td>把 Bug 钉成了期望</td><td>期望值看着别扭，像是「代码就是这么算的」而不是「业务上应该这样」</td><td>本章图 15-2</td></tr>
+  <tr><td>Mock 掉数据库或仓储来测控制器</td><td>测试里没有真实的存储，全是 <code>when(repo.get…).thenReturn(…)</code></td><td>第 8 章：受管依赖用真的</td></tr>
+  <tr><td>测私有方法、读私有字段</td><td>用了反射，或者访问下划线开头的成员</td><td>第 11 章</td></tr>
+  <tr><td>为了测试改生产代码</td><td>生产代码里多出了只有测试才用的开关、构造函数或公开方法</td><td>第 11 章：代码污染</td></tr>
+  <tr><td>一个测试验证好几件事，或者有分支和循环</td><td>测试里出现 <code>if</code> / <code>for</code>；「执行」和「断言」交替出现好几轮</td><td>第 3 章：AAA</td></tr>
+  <tr><td>名字照抄方法名</td><td><code>testChangeEmail</code>、<code>changeEmail_works</code> —— 读不出是哪条业务规则</td><td>第 3 章：命名</td></tr>
+  <tr><td>大量近似重复</td><td>十个测试只差一个参数，其中一半走的是同一条路径</td><td>第 3 章：参数化；第 4 章：可维护性</td></tr>
+  <tr><td>异步测试没有真的等结果</td><td>少了 <code>await</code>，或断言写在回调里</td><td>第 13 章</td></tr>
+  <tr><td>调用了不存在的方法或用错了框架的写法</td><td>编译不过或运行就报错 —— 这是最不需要担心的一类，因为它自己会暴露</td><td>—</td></tr>
+</table>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="各种毛病分别伤的是哪根支柱。防止回归：断言空洞、测琐碎代码、把 Bug 钉成期望、异步断言没执行，变异测试能查出来。抗重构：Mock 内部对象、照抄实现、测私有方法、Mock 掉数据库，工具查不出只能靠人看。快速反馈：测试里真的 sleep、每个测试都起一遍完整环境。可维护性：名字照抄方法名、大量近似重复、测试里有逻辑、期望值要靠心算">
+  <rect class="bx-g" x="14" y="16" width="176" height="218" rx="12"/>
+  <text class="ttl on-g" x="102" y="42" text-anchor="middle">防止回归</text>
+  <text class="sm" x="102" y="60" text-anchor="middle">代码错了会红吗</text>
+  <text class="lbl" x="102" y="96" text-anchor="middle">② 断言空洞</text>
+  <text class="lbl" x="102" y="122" text-anchor="middle">③ 测琐碎代码</text>
+  <text class="lbl" x="102" y="148" text-anchor="middle">把 Bug 钉成期望</text>
+  <text class="lbl" x="102" y="174" text-anchor="middle">异步断言没执行</text>
+  <text class="sm on-g" x="102" y="214" text-anchor="middle">变异测试能查出来</text>
+
+  <rect class="bx-b" x="200" y="16" width="176" height="218" rx="12"/>
+  <text class="ttl on-b" x="288" y="42" text-anchor="middle">抗重构</text>
+  <text class="sm" x="288" y="60" text-anchor="middle">代码没错会红吗</text>
+  <text class="lbl" x="288" y="96" text-anchor="middle">④ Mock 内部对象</text>
+  <text class="lbl" x="288" y="122" text-anchor="middle">① 照抄实现</text>
+  <text class="lbl" x="288" y="148" text-anchor="middle">测私有方法</text>
+  <text class="lbl" x="288" y="174" text-anchor="middle">Mock 掉数据库</text>
+  <text class="sm on-b" x="288" y="214" text-anchor="middle">工具查不出，只能靠人看</text>
+
+  <rect class="bx-p" x="386" y="16" width="176" height="218" rx="12"/>
+  <text class="ttl on-p" x="474" y="42" text-anchor="middle">快速反馈</text>
+  <text class="sm" x="474" y="60" text-anchor="middle">跑一遍要多久</text>
+  <text class="lbl" x="474" y="96" text-anchor="middle">测试里真的 sleep</text>
+  <text class="lbl" x="474" y="122" text-anchor="middle">每个测试都起</text>
+  <text class="lbl" x="474" y="140" text-anchor="middle">一遍完整环境</text>
+  <text class="sm on-p" x="474" y="214" text-anchor="middle">看运行时间就知道</text>
+
+  <rect class="bx-a" x="572" y="16" width="174" height="218" rx="12"/>
+  <text class="ttl on-a" x="659" y="42" text-anchor="middle">可维护性</text>
+  <text class="sm" x="659" y="60" text-anchor="middle">读得懂、改得动吗</text>
+  <text class="lbl" x="659" y="96" text-anchor="middle">名字照抄方法名</text>
+  <text class="lbl" x="659" y="122" text-anchor="middle">大量近似重复</text>
+  <text class="lbl" x="659" y="148" text-anchor="middle">测试里有逻辑</text>
+  <text class="lbl" x="659" y="174" text-anchor="middle">① 期望值要靠心算</text>
+  <text class="sm on-a" x="659" y="214" text-anchor="middle">读一遍就知道</text>
+</svg>
+<figcaption>图 15-3　每种毛病伤的是哪根支柱，以及靠什么发现</figcaption>
+</figure>
+
+<h2 id="measure">实测：这四个测试到底有多少保护力</h2>
+
+<p>在配套示例的 Python 版上做两个实验，把上面四个测试和示例自带的 10 个手写单元测试放在一起比。</p>
+
+<h3>实验一：代码改错了，它们会红吗</h3>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>上面四个测试</th><th>示例自带的 10 个</th></tr>
+  <tr><td>运行结果</td><td>4 个全部通过</td><td>10 个全部通过</td></tr>
+  <tr><td>领域模型的行覆盖率</td><td>89%</td><td>97%</td></tr>
+  <tr><td>杀死的变异体（共 86 个，第 14 章）</td><td><strong>35 个</strong></td><td><strong>71 个</strong></td></tr>
+  <tr><td>其中只留 ②、③ 两个测试时</td><td>覆盖率仍是 89%，只杀死 <strong>23 个</strong></td><td>—</td></tr>
+</table>
+</div>
+
+<p>
+  覆盖率只差 8 个百分点，看起来「差不多」；被验证到的行为却差了一倍。
+  最后一行尤其说明问题：把 ① 和 ④ 拿掉，覆盖率<strong>一点没降</strong>，杀死的变异体却又少了三分之一 —— ② 和 ③ 贡献的几乎只有覆盖率。
+</p>
+
+<h3>实验二：代码没错，它们会红吗</h3>
+
+<p>
+  做一次<strong>不改变任何行为</strong>的重构：<code>User.changeEmail</code> 里不再调用 <code>company.is_email_corporate(...)</code>，
+  而是直接比较邮箱的结尾和公司域名。对所有合法的邮箱，结果完全一样。然后把 14 个测试全跑一遍：
+</p>
+
+<div class="code" data-lang="text"><pre>
+E               AttributeError: Mock object has no attribute 'domain_name'
+FAILED tests/unit/test_ai.py::test_change_email_calls_company - AttributeErro...
+1 failed, 13 passed
+</pre></div>
+
+<p>
+  红的正是 ④ —— 一个<strong>假警报</strong>。行为没变，它却要求你去改测试。另外 13 个测试（包括手写的 10 个）都不受影响。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 两个实验对应两根支柱，而工具只能帮你做第一个</div>
+  <p>
+    实验一可以自动化（变异测试），它能把 ②、③ 这类空洞的测试揪出来。
+    实验二不行：④ 在实验一里表现并不差 —— 实测它一个测试就杀死了 19 个变异体，因为它盯着每一次调用，相应的代码一改它就红。
+    <strong>「和实现绑得太紧」这种毛病，目前没有工具能替你判断，只能靠评审的人对照第 5 章去看：这个断言钉住的，是可观察行为，还是实现细节？</strong>
+  </p>
+</div>
+
+<h2 id="checklist">一份评审清单</h2>
+
+<p>
+  面对几十个生成出来的测试，不需要逐行细读。按下面的顺序过，大多数测试在前两步就能决定去留：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 420" role="img" aria-label="评审一个测试的六步流程。第一步：它测的东西值得测吗，琐碎代码就删。第二步：它验证的是可观察行为吗，验证内部调用就改或删。第三步：期望值是直接写出来的字面量吗，是算出来的就改。第四步：被替换的只有不受管依赖吗，Mock 了自己的类或数据库就改。第五步：把代码改错它会红吗，不会就补断言。第六步：名字和结构读得懂吗，读不懂就改名整理。全部通过才留下">
+  <text class="ttl" x="250" y="22" text-anchor="middle">问题</text>
+  <text class="ttl" x="640" y="22" text-anchor="middle">答案是「否」时</text>
+
+  <rect class="bx" x="30" y="34" width="440" height="46" rx="10"/>
+  <text class="lbl" x="46" y="54"><tspan font-weight="700">① 它测的东西值得测吗？</tspan></text>
+  <text class="sm" x="46" y="70">有业务逻辑，或者是一条完整的业务场景（第 7 章四象限）</text>
+  <path class="ln-r" d="M472 57 H536" marker-end="url(#ar-r)"/>
+  <rect class="bx-r" x="540" y="38" width="200" height="38" rx="8"/><text class="lbl on-r" x="640" y="62" text-anchor="middle">删。别心疼</text>
+  <path class="ln-g" d="M250 82 V92" marker-end="url(#ar-g)"/>
+
+  <rect class="bx" x="30" y="96" width="440" height="46" rx="10"/>
+  <text class="lbl" x="46" y="116"><tspan font-weight="700">② 它验证的是可观察行为吗？</tspan></text>
+  <text class="sm" x="46" y="132">返回值、最终状态、发给外部系统的消息 —— 而不是内部怎么调用（第 5 章）</text>
+  <path class="ln-r" d="M472 119 H536" marker-end="url(#ar-r)"/>
+  <rect class="bx-r" x="540" y="100" width="200" height="38" rx="8"/><text class="lbl on-r" x="640" y="124" text-anchor="middle">改成断言结果，或者删</text>
+  <path class="ln-g" d="M250 144 V154" marker-end="url(#ar-g)"/>
+
+  <rect class="bx" x="30" y="158" width="440" height="46" rx="10"/>
+  <text class="lbl" x="46" y="178"><tspan font-weight="700">③ 期望值是直接写出来的吗？</tspan></text>
+  <text class="sm" x="46" y="194">字面量，不是在测试里重算一遍；而且你确认过它符合业务规则（第 11 章）</text>
+  <path class="ln-r" d="M472 181 H536" marker-end="url(#ar-r)"/>
+  <rect class="bx-a" x="540" y="162" width="200" height="38" rx="8"/><text class="lbl on-a" x="640" y="186" text-anchor="middle">换成字面量，并核对它</text>
+  <path class="ln-g" d="M250 206 V216" marker-end="url(#ar-g)"/>
+
+  <rect class="bx" x="30" y="220" width="440" height="46" rx="10"/>
+  <text class="lbl" x="46" y="240"><tspan font-weight="700">④ 被替换掉的只有不受管依赖吗？</tspan></text>
+  <text class="sm" x="46" y="256">消息总线、第三方服务可以换；自己的类和自己的数据库不换（第 8、9 章）</text>
+  <path class="ln-r" d="M472 243 H536" marker-end="url(#ar-r)"/>
+  <rect class="bx-a" x="540" y="224" width="200" height="38" rx="8"/><text class="lbl on-a" x="640" y="248" text-anchor="middle">换回真的对象</text>
+  <path class="ln-g" d="M250 268 V278" marker-end="url(#ar-g)"/>
+
+  <rect class="bx" x="30" y="282" width="440" height="46" rx="10"/>
+  <text class="lbl" x="46" y="302"><tspan font-weight="700">⑤ 把代码改错，它会红吗？</tspan></text>
+  <text class="sm" x="46" y="318">动手改一处试试，或者跑变异测试（第 14 章）；异步的尤其要试（第 13 章）</text>
+  <path class="ln-r" d="M472 305 H536" marker-end="url(#ar-r)"/>
+  <rect class="bx-a" x="540" y="286" width="200" height="38" rx="8"/><text class="lbl on-a" x="640" y="310" text-anchor="middle">补上具体的断言</text>
+  <path class="ln-g" d="M250 330 V340" marker-end="url(#ar-g)"/>
+
+  <rect class="bx" x="30" y="344" width="440" height="46" rx="10"/>
+  <text class="lbl" x="46" y="364"><tspan font-weight="700">⑥ 不看实现，能读懂它在说什么吗？</tspan></text>
+  <text class="sm" x="46" y="380">名字是一句业务上的话；准备、执行、断言三段清楚（第 3 章）</text>
+  <path class="ln-r" d="M472 367 H536" marker-end="url(#ar-r)"/>
+  <rect class="bx-a" x="540" y="348" width="200" height="38" rx="8"/><text class="lbl on-a" x="640" y="372" text-anchor="middle">改名、整理结构</text>
+
+  <text class="sm on-g" x="250" y="410" text-anchor="middle">六个都是「是」&rarr; 留下</text>
+</svg>
+<figcaption>图 15-4　评审清单。红色的直接删，橙色的值得花时间改</figcaption>
+</figure>
+
+<p>
+  注意顺序是有意安排的：<strong>最省力、淘汰最多的检查放在最前面。</strong>① 只要看一眼被测的是什么；② 只要看断言是 <code>verify(...)</code> 还是 <code>assertEquals(...)</code>。
+  需要动手的 ⑤ 放在后面，只对通过了前四步的测试做。
+</p>
+
+<h3>改完是什么样</h3>
+
+<p>
+  把 ① 的期望值换成字面量，把 ② 的断言补具体，把 ④ 换回真的 <code>Company</code>、改成断言状态 —— 三个测试会<strong>收敛成同一个</strong>。
+  它就是配套示例里手写的那个：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="text"><pre>
+E               AttributeError: Mock object has no attribute 'domain_name'
+FAILED tests/unit/test_ai.py::test_change_email_calls_company - AttributeErro...
+1 failed, 13 passed
+</pre></div>
+<div class="code" data-lang="java"><pre>
+@Test
+void changing_email_from_non_corporate_to_corporate() {
+    var company = new Company("mycorp.com", 1);
+    var sut = new User(1, "user@gmail.com", UserType.CUSTOMER, false);
+
+    sut.changeEmail("new@mycorp.com", company);
+
+    assertThat(company.getNumberOfEmployees()).isEqualTo(2);
+    assertThat(sut.getEmail()).isEqualTo("new@mycorp.com");
+    assertThat(sut.getType()).isEqualTo(UserType.EMPLOYEE);
+    assertThat(sut.getDomainEvents()).containsExactly(
+        new UserTypeChangedEvent(1, UserType.CUSTOMER, UserType.EMPLOYEE),
+        new EmailChangedEvent(1, "new@mycorp.com"));
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_changing_email_from_non_corporate_to_corporate():
+    company = Company("mycorp.com", 1)
+    sut = User(1, "user@gmail.com", UserType.CUSTOMER, False)
+
+    sut.change_email("new@mycorp.com", company)
+
+    assert company.number_of_employees == 2
+    assert sut.email == "new@mycorp.com"
+    assert sut.type == UserType.EMPLOYEE
+    assert sut.domain_events == [
+        UserTypeChangedEvent(1, UserType.CUSTOMER, UserType.EMPLOYEE),
+        EmailChangedEvent(1, "new@mycorp.com"),
+    ]
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changing email from non corporate to corporate', () =&gt; {
+  const company = new Company('mycorp.com', 1)
+  const sut = new User(1, 'user@gmail.com', UserType.Customer, false)
+
+  sut.changeEmail('new@mycorp.com', company)
+
+  expect(company.numberOfEmployees).toBe(2)
+  expect(sut.email).toBe('new@mycorp.com')
+  expect(sut.type).toBe(UserType.Employee)
+  expect(sut.domainEvents).toEqual([
+    { kind: 'UserTypeChanged', userId: 1, oldType: UserType.Customer, newType: UserType.Employee },
+    { kind: 'EmailChanged', userId: 1, newEmail: 'new@mycorp.com' },
+  ])
+})
+</pre></div>
+</div>
+
+<p>四个测试变成了一个，行数更少，保护力更强。<strong>评审 AI 生成的测试，结果通常是测试变少，而不是变多。</strong></p>
+
+<h2 id="ask">怎么提要求，让它一开始就写得好些</h2>
+
+<p>
+  图 15-2 已经指出了根源：AI 只看得到代码。所以最有效的办法不是事后挑错，而是<strong>给它第二个信息来源</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="一个把判断留给人的流程：人列出要验证的行为，AI 把它们写成测试，运行并确认在代码缺失或改错时会红，人按清单评审，最后定期用变异测试体检。其中决定测什么和评审是人做的，其余可以交给 AI 和工具">
+  <rect class="bx-b" x="14" y="50" width="136" height="110" rx="10"/>
+  <text class="ttl on-b" x="82" y="76" text-anchor="middle">① 列出行为</text>
+  <text class="sm" x="82" y="98" text-anchor="middle">用业务语言写下</text>
+  <text class="sm" x="82" y="114" text-anchor="middle">要验证的几条规则</text>
+  <text class="sm" x="82" y="130" text-anchor="middle">和各自的期望结果</text>
+  <text class="sm on-b" x="82" y="150" text-anchor="middle">人</text>
+
+  <rect class="bx" x="164" y="50" width="136" height="110" rx="10"/>
+  <text class="ttl" x="232" y="76" text-anchor="middle">② 写成测试</text>
+  <text class="sm" x="232" y="98" text-anchor="middle">按你给的约定：</text>
+  <text class="sm" x="232" y="114" text-anchor="middle">哪种测试、换哪些依赖、</text>
+  <text class="sm" x="232" y="130" text-anchor="middle">怎么命名</text>
+  <text class="sm" x="232" y="150" text-anchor="middle">AI</text>
+
+  <rect class="bx" x="314" y="50" width="136" height="110" rx="10"/>
+  <text class="ttl" x="382" y="76" text-anchor="middle">③ 看它红一次</text>
+  <text class="sm" x="382" y="98" text-anchor="middle">功能还没写，或者</text>
+  <text class="sm" x="382" y="114" text-anchor="middle">故意把代码改错：</text>
+  <text class="sm" x="382" y="130" text-anchor="middle">测试必须失败</text>
+  <text class="sm" x="382" y="150" text-anchor="middle">AI 执行，人看结果</text>
+
+  <rect class="bx-b" x="464" y="50" width="136" height="110" rx="10"/>
+  <text class="ttl on-b" x="532" y="76" text-anchor="middle">④ 评审</text>
+  <text class="sm" x="532" y="98" text-anchor="middle">按图 15-4 的清单</text>
+  <text class="sm" x="532" y="114" text-anchor="middle">留、改、删</text>
+  <text class="sm" x="532" y="130" text-anchor="middle">核对每个期望值</text>
+  <text class="sm on-b" x="532" y="150" text-anchor="middle">人</text>
+
+  <rect class="bx" x="614" y="50" width="132" height="110" rx="10"/>
+  <text class="ttl" x="680" y="76" text-anchor="middle">⑤ 定期体检</text>
+  <text class="sm" x="680" y="98" text-anchor="middle">变异测试：</text>
+  <text class="sm" x="680" y="114" text-anchor="middle">看幸存者名单里</text>
+  <text class="sm" x="680" y="130" text-anchor="middle">有没有意外</text>
+  <text class="sm" x="680" y="150" text-anchor="middle">工具</text>
+
+  <path class="ln" d="M152 105 H160" marker-end="url(#ar)"/>
+  <path class="ln" d="M302 105 H310" marker-end="url(#ar)"/>
+  <path class="ln" d="M452 105 H460" marker-end="url(#ar)"/>
+  <path class="ln" d="M602 105 H610" marker-end="url(#ar)"/>
+
+  <text class="sm" x="380" y="24" text-anchor="middle">蓝色的两步是判断，必须由人来做</text>
+  <text class="sm" x="380" y="200" text-anchor="middle">第 ① 步让测试有了独立于代码的信息来源；第 ③ 步证明断言真的在工作</text>
+  <text class="sm" x="380" y="220" text-anchor="middle">这其实就是「先写测试」的流程 —— 只是打字的换了人</text>
+</svg>
+<figcaption>图 15-5　把「决定测什么」和「判断测得好不好」留给自己</figcaption>
+</figure>
+
+<h3>一个可以直接改着用的要求</h3>
+
+<div class="code" data-lang="text"><pre>
+为 User.changeEmail 写单元测试。
+
+要验证的行为（按业务规则，不要从实现反推）：
+1. 客户把邮箱改成公司域名的邮箱 → 变成员工，公司员工数 +1
+2. 员工把邮箱改成非公司域名的邮箱 → 变成客户，公司员工数 -1
+3. 新旧邮箱类型相同 → 用户类型和员工数都不变
+4. 新邮箱和旧邮箱相同 → 什么都不发生，不产生事件
+5. 邮箱已确认的用户 → 不允许修改
+
+约定：
+- 这是领域模型，没有进程外依赖：不要使用任何 Mock，Company 用真的对象
+- 断言最终状态和领域事件；期望值写字面量，不要在测试里计算
+- 每个测试只验证上面的一条；名字用一句话描述这条规则
+- 结构：准备 / 执行 / 断言，三段之间空一行
+- 不要测构造函数和取值方法
+
+先只把你打算写的测试名列出来给我确认，不要写代码。
+</pre></div>
+
+<p>这段话里起作用的是这几处：</p>
+
+<div class="tw">
+<table>
+  <tr><th>写了什么</th><th>防的是哪种毛病</th></tr>
+  <tr><td><strong>行为清单</strong>，带期望结果</td><td>测试有了独立于实现的依据；顺带防住「每个方法一个测试」和琐碎测试</td></tr>
+  <tr><td>说明这是<strong>哪一类代码</strong>、哪些依赖可以换</td><td>防 ④。AI 的默认倾向是见到协作者就 Mock；你得告诉它第 7、8 章的结论</td></tr>
+  <tr><td>「期望值写字面量」</td><td>防 ①</td></tr>
+  <tr><td>「先列测试名」</td><td>在生成几百行代码之前，用半分钟评审测试<strong>清单</strong> —— 这是成本最低的评审点</td></tr>
+</table>
+</div>
+
+<div class="box tip">
+  <div class="t">&#128161; 把约定写进仓库，别每次都重说</div>
+  <p>
+    大多数 AI 编程工具都会读仓库里的某个说明文件。把团队的测试约定写在那里：
+    「领域模型不用 Mock」「数据库用真的，只替换消息总线」「测试名是一句业务上的话」「集成测试只走最长的成功路径」……
+    这些正是本教程各章的结论。写一次，之后生成的每个测试都会照着来。
+  </p>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 「让测试通过」是一个危险的指令</div>
+  <p>
+    让 AI 去修一个失败的测试时，它有两条路：修代码，或者改测试。后者往往更容易 —— 放宽断言、改掉期望值、甚至把测试跳过。
+    测试变绿了，保护也没了。所以：<strong>测试文件的任何改动都要单独看一眼</strong>，特别留意被删掉的断言、被改动的期望值和新出现的「跳过」标记。
+    一个之前是红的、现在变绿的测试，要确认绿的原因是代码对了。
+  </p>
+</div>
+
+<h2 id="division">哪些交给它，哪些自己来</h2>
+
+<div class="tw">
+<table>
+  <tr><th>适合交给 AI</th><th>为什么</th></tr>
+  <tr><td>把你列好的行为清单写成测试代码</td><td>判断已经做完，剩下的是打字</td></tr>
+  <tr><td>把一组近似重复的测试合并成参数化测试（第 3 章）</td><td>机械的改写，容易核对</td></tr>
+  <tr><td>写造数据的辅助代码：工厂方法、构建器、断言辅助（第 3、10 章）</td><td>枯燥、模式固定，出错了测试自己会暴露</td></tr>
+  <tr><td>给遗留代码写<strong>特征测试</strong>（第 12 章）</td><td>这里要的就是「照着现有行为写」—— 它的弱点在这个场景下正好是需要的</td></tr>
+  <tr><td>帮你想边界情况：「这条规则还有哪些情况我没列到？」</td><td>它提出候选，你来决定哪些成立。和属性测试（第 14 章）的作用类似</td></tr>
+  <tr><td>解释一个失败的测试、定位原因</td><td>结论可以马上验证</td></tr>
+</table>
+</div>
+
+<div class="tw">
+<table>
+  <tr><th>必须自己做</th><th>为什么</th></tr>
+  <tr><td>决定<strong>测什么</strong>：哪些行为重要，哪些代码不值得测</td><td>这取决于业务，代码里读不出来</td></tr>
+  <tr><td>确认每个<strong>期望值</strong>符合业务规则</td><td>AI 给出的期望值来自代码或来自猜测，两者都不是需求</td></tr>
+  <tr><td>判断一个断言钉住的是<strong>行为还是实现细节</strong></td><td>目前没有工具能查，而它决定了测试会不会拖累重构</td></tr>
+  <tr><td>决定<strong>测试的边界</strong>：单元还是集成，哪些依赖用真的</td><td>这是架构上的决定（第 7、8 章）</td></tr>
+  <tr><td>决定<strong>删掉</strong>哪些测试</td><td>生成是免费的，所以「多留几个也无妨」的诱惑很大；可维护成本是真的</td></tr>
+</table>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>AI 把写测试的成本降到接近零，但运行、排查、修改、阅读的成本没变，还因为数量增加而放大。瓶颈从「写」变成了「判断哪些值得留」。</li>
+  <li>「照着代码生成测试」得到的是代码的<strong>镜像</strong>，不是独立的核对。它天然倾向于记录「代码现在做什么」。</li>
+  <li>四种最常见的毛病：<strong>照抄实现</strong>、<strong>断言空洞</strong>、<strong>测琐碎代码</strong>、<strong>Mock 内部对象并验证调用</strong>。它们都能通过，都能贡献覆盖率。</li>
+  <li>实测：四个这样的测试覆盖率 89%、杀死 35 个变异体；手写的十个覆盖率 97%、杀死 71 个。一次不改变行为的重构让其中一个测试红了。</li>
+  <li>「代码错了会不会红」可以用变异测试自动检查；「代码没错会不会红」只能靠人对照第 5 章来判断。</li>
+  <li>评审清单按淘汰效率排序：值得测吗 → 验证的是行为吗 → 期望值是字面量吗 → 只替换了不受管依赖吗 → 改错代码会红吗 → 读得懂吗。</li>
+  <li>评审的结果通常是测试<strong>变少</strong>。</li>
+  <li>想让它写得好，就给它代码之外的信息：行为清单、这是哪类代码、哪些依赖可以换。先评审测试清单，再生成代码。</li>
+  <li>决定测什么、核对期望值、判断是行为还是实现细节、决定删什么 —— 这些留给自己。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>AI 为一个类生成了 40 个测试，全部通过，覆盖率 95%。在读任何一个测试之前，你能从这些数字里得出什么结论？</summary>
+  <p>几乎什么都得不出。全部通过是必然的 —— 测试是照着现有代码写的。覆盖率只说明代码被执行了。要知道它们有没有在验证，需要看断言（或者跑变异测试）；要知道它们会不会拖累重构，需要看它们钉住的是什么。</p>
+</details>
+<details class="quiz">
+  <summary>一个生成的测试断言 <code>calculateDiscount(100)</code> 返回 <code>7</code>。你去看需求，规则是「满 100 减 10」。测试是绿的。发生了什么？</summary>
+  <p>代码里有 Bug，而测试把 Bug 的结果当成期望值记了下来（图 15-2 右边的情况）。这时不能只改测试或只改代码：先确认需求，把期望值改成 10，看测试变红，再修代码让它变绿。这也是为什么期望值必须由人对照业务规则核对。</p>
+</details>
+<details class="quiz">
+  <summary>为什么说「把所有协作者都 Mock 掉」的测试在变异测试里得分可能很高，却仍然是坏测试？</summary>
+  <p>因为它验证了每一次内部调用，生产代码里任何一处改动 —— 包括改错 —— 都会让它变红，所以变异体被杀得很干净。但出于同样的原因，任何不改变行为的重构也会让它变红。变异测试只衡量防止回归，看不出抗重构这根支柱。</p>
+</details>
+<details class="quiz">
+  <summary>同事说：「反正生成测试不花钱，多多益善，万一哪个能抓到 Bug 呢。」你怎么回应？</summary>
+  <p>生成不花钱，拥有要花钱。每多一个测试，测试集就慢一点，重构时要改的地方就多一处，假警报就多一种可能。第 1 章的结论没有变：测试是负债，目标是用最少的测试换最大的保护，而不是测试的数量。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>把本章四个「坏测试」放进配套示例跑一遍，确认它们都通过。然后做一次实验二那样的重构，看哪个会红。</li>
+    <li>让你常用的 AI 工具「给 <code>UserController</code> 写单元测试」，不加任何别的说明。按图 15-4 的清单评审结果：有几个能留下？它 Mock 了什么？</li>
+    <li>换成本章「可以直接改着用的要求」那种写法再试一次（先列行为，说明约定，先要测试名）。对比两次的结果。</li>
+    <li>把你团队的测试约定写成十行以内的说明，放进仓库里 AI 工具会读的那个文件。</li>
+    <li>回头看你项目里最近合并的一批测试（不管是谁写的），随机抽五个按清单过一遍。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

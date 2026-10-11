@@ -1,0 +1,880 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 14 章 · 变异测试与属性测试 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="14">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 14 章 · 补充</span>
+<h1>变异测试与属性测试</h1>
+<p class="lede">
+  第 1 章留下了一个问题：覆盖率只能说明代码<strong>被执行过</strong>，不能说明它<strong>被验证过</strong>。那用什么来衡量？
+  这一章介绍两种工具。<strong>变异测试</strong>回答「代码要是错了，测试会发现吗」；<strong>属性测试</strong>回答「有没有哪种输入是我没想到的」。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解变异测试的原理，会在三种语言里把它跑起来</li>
+    <li>会读变异测试的报告：哪些「幸存者」值得补测试，哪些不值得</li>
+    <li>理解属性测试和举例测试的区别，会写出不照抄实现的属性</li>
+    <li>看懂「收缩」后的最小反例，并知道拿它怎么办</li>
+    <li>知道这两种工具各自的代价，以及它们<strong>测不出</strong>什么</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<div class="box note">
+  <div class="t">&#9432; 这一章不是原书内容</div>
+  <p>
+    本章是教程的补充。文中所有数字和输出都是在配套示例
+    <a href="https://github.com/YamahaFG1984/unit-testing/tree/main/examples"><code>examples/</code></a>
+    上实际运行得到的（mutmut 3.8、PIT 1.17、Stryker 10；Hypothesis 6、jqwik 1.9、fast-check 4）。
+    变异测试的配置已经放进了示例，你可以照着命令重现；属性测试的代码没有放进示例，但文中的每一段都运行过。
+    工具版本不同，具体数字会有出入。
+  </p>
+</div>
+
+<h2 id="two-questions">覆盖率回答不了的两个问题</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="覆盖率只回答哪些代码被执行了。它回答不了两个问题：代码被改错时测试会不会发现，由变异测试回答；有没有没想到的输入，由属性测试回答">
+  <rect class="bx" x="250" y="14" width="260" height="60" rx="12"/>
+  <text class="ttl" x="380" y="40" text-anchor="middle">覆盖率</text>
+  <text class="sm" x="380" y="60" text-anchor="middle">回答：哪些代码被<tspan font-weight="700">执行</tspan>过</text>
+
+  <path class="ln" d="M320 76 L200 112" marker-end="url(#ar)"/>
+  <path class="ln" d="M440 76 L560 112" marker-end="url(#ar)"/>
+  <text class="sm" x="380" y="104" text-anchor="middle">它回答不了的</text>
+
+  <rect class="bx-a" x="30" y="116" width="340" height="100" rx="12"/>
+  <text class="ttl on-a" x="200" y="142" text-anchor="middle">执行到了，可是验证了吗？</text>
+  <text class="sm" x="200" y="164" text-anchor="middle">这行代码要是写错了，会有测试变红吗</text>
+  <text class="lbl on-a" x="200" y="196" text-anchor="middle">&rarr; 变异测试：检验<tspan font-weight="700">测试</tspan>本身</text>
+
+  <rect class="bx-b" x="390" y="116" width="340" height="100" rx="12"/>
+  <text class="ttl on-b" x="560" y="142" text-anchor="middle">我举的例子够吗？</text>
+  <text class="sm" x="560" y="164" text-anchor="middle">有没有哪种输入，我压根没想到要试</text>
+  <text class="lbl on-b" x="560" y="196" text-anchor="middle">&rarr; 属性测试：扩大<tspan font-weight="700">输入</tspan>的范围</text>
+</svg>
+<figcaption>图 14-1　两个问题，两种工具</figcaption>
+</figure>
+
+<h2 id="mutation">变异测试：故意把代码改错，看测试红不红</h2>
+
+<div class="term">
+  <b class="w">变异测试（mutation testing）</b>
+  <p>
+    工具自动对生产代码做一处很小的修改（比如把 <code>+</code> 改成 <code>-</code>），得到一个<strong>变异体</strong>，然后跑一遍测试。
+    有测试变红，说明这个错误会被发现，变异体<strong>被杀死</strong>；测试全绿，说明这处错误没人管，变异体<strong>幸存</strong>。对每一处可改的地方重复这个过程。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="变异测试的流程：从原始代码生成许多变异体，每个只改一处；对每个变异体运行测试；有测试变红的变异体被杀死，测试全绿的变异体幸存，幸存者指出了测试的漏洞">
+  <rect class="bx" x="10" y="80" width="196" height="80" rx="10"/>
+  <text class="ttl" x="108" y="106" text-anchor="middle">原始代码</text>
+  <text class="mono sm" x="108" y="128" text-anchor="middle">delta = isEmp ? 1 : -1</text>
+  <text class="sm" x="108" y="148" text-anchor="middle">测试全绿</text>
+
+  <path class="ln" d="M190 78 L232 52" marker-end="url(#ar)"/>
+  <path class="ln" d="M208 120 H232" marker-end="url(#ar)"/>
+  <path class="ln" d="M190 162 L232 188" marker-end="url(#ar)"/>
+  <text class="sm" x="108" y="186" text-anchor="middle">每次只改一处，</text>
+  <text class="sm" x="108" y="202" text-anchor="middle">得到一个变异体</text>
+
+  <rect class="bx-a" x="236" y="24" width="194" height="50" rx="8"/><text class="sm on-a" x="333" y="44" text-anchor="middle">变异体 1</text><text class="mono sm" x="333" y="62" text-anchor="middle">delta = isEmp ? -1 : -1</text>
+  <rect class="bx-a" x="236" y="95" width="194" height="50" rx="8"/><text class="sm on-a" x="333" y="115" text-anchor="middle">变异体 2</text><text class="mono sm" x="333" y="133" text-anchor="middle">delta = isEmp ? 1 : 1</text>
+  <rect class="bx-a" x="236" y="166" width="194" height="50" rx="8"/><text class="sm on-a" x="333" y="186" text-anchor="middle">变异体 3</text><text class="mono sm" x="333" y="204" text-anchor="middle">throw Error("")</text>
+
+  <path class="ln" d="M432 49 H486" marker-end="url(#ar)"/>
+  <path class="ln" d="M432 120 H486" marker-end="url(#ar)"/>
+  <path class="ln" d="M432 191 H486" marker-end="url(#ar)"/>
+  <text class="sm" x="459" y="238" text-anchor="middle">各跑一遍测试</text>
+
+  <rect class="bx-g" x="490" y="24" width="256" height="50" rx="8"/><text class="lbl on-g" x="506" y="46">有测试变红 &rarr; 被杀死 &#10003;</text><text class="sm" x="506" y="64">这种错误会被发现</text>
+  <rect class="bx-g" x="490" y="95" width="256" height="50" rx="8"/><text class="lbl on-g" x="506" y="117">有测试变红 &rarr; 被杀死 &#10003;</text><text class="sm" x="506" y="135">这种错误会被发现</text>
+  <rect class="bx-r" x="490" y="166" width="256" height="50" rx="8"/><text class="lbl on-r" x="506" y="188">测试全绿 &rarr; 幸存 &#10007;</text><text class="sm" x="506" y="206">这里改错了也没人知道：看一看</text>
+</svg>
+<figcaption>图 14-2　变异测试把「测试到底有没有在验证」变成了可以实际检验的事</figcaption>
+</figure>
+
+<p>工具会做哪些修改？各家略有不同，但大致是这几类：</p>
+
+<div class="tw">
+<table>
+  <tr><th>变异类型</th><th>原来</th><th>改成</th><th>没被杀死说明什么</th></tr>
+  <tr><td>算术 / 符号</td><td><code>a + b</code>、<code>1</code></td><td><code>a - b</code>、<code>-1</code></td><td>算出来的结果没被断言</td></tr>
+  <tr><td>比较边界</td><td><code>x &gt;= 0</code></td><td><code>x &gt; 0</code></td><td>没有恰好踩在边界上的测试</td></tr>
+  <tr><td>条件取反 / 写死</td><td><code>if (a == b)</code></td><td><code>if (a != b)</code>、<code>if (true)</code></td><td>这个分支的两个方向没有都被验证</td></tr>
+  <tr><td>删掉一次调用</td><td><code>check(x);</code></td><td>（整行删掉）</td><td>这次调用的效果没被任何测试观察到</td></tr>
+  <tr><td>替换返回值</td><td><code>return result;</code></td><td><code>return null;</code>、<code>return "";</code></td><td>返回值没被断言</td></tr>
+  <tr><td>替换字面量</td><td><code>"Precondition failed"</code></td><td><code>""</code></td><td>没有测试关心这段文本</td></tr>
+</table>
+</div>
+
+<h3>一个实验：把断言全删掉</h3>
+
+<p>
+  第 1 章说过，没有断言的测试照样能把覆盖率刷满。我们拿配套示例的 Python 版实际试一下：
+  把 10 个单元测试里的 <code>assert</code> 语句全部换成 <code>pass</code>（保留了 <code>pytest.raises</code> 那几处），然后分别看覆盖率和变异测试的结果。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="实验结果对比。完整的测试：覆盖率百分之九十七，86 个变异体杀死 71 个。删掉断言后的测试：覆盖率仍是百分之九十七，86 个变异体只杀死 33 个">
+  <text class="ttl" x="200" y="24" text-anchor="middle">原来的 10 个单元测试</text>
+  <text class="ttl on-r" x="570" y="24" text-anchor="middle">删掉所有 assert 之后</text>
+
+  <text class="sm" x="30" y="62">覆盖率</text>
+  <rect class="bx" x="100" y="46" width="250" height="26" rx="5"/>
+  <rect class="bx-b" x="100" y="46" width="242" height="26" rx="5"/><text class="lbl on-b" x="221" y="64" text-anchor="middle">97%</text>
+  <text class="sm" x="400" y="62">覆盖率</text>
+  <rect class="bx" x="470" y="46" width="250" height="26" rx="5"/>
+  <rect class="bx-b" x="470" y="46" width="242" height="26" rx="5"/><text class="lbl on-b" x="591" y="64" text-anchor="middle">97%</text>
+  <text class="sm on-b" x="380" y="96" text-anchor="middle">一模一样 —— 覆盖率看不出任何区别</text>
+
+  <text class="sm" x="30" y="140">杀死的</text>
+  <text class="sm" x="30" y="156">变异体</text>
+  <rect class="bx" x="100" y="128" width="250" height="26" rx="5"/>
+  <rect class="bx-g" x="100" y="128" width="206" height="26" rx="5"/><text class="lbl on-g" x="203" y="146" text-anchor="middle">71 / 86</text>
+  <text class="sm" x="400" y="140">杀死的</text>
+  <text class="sm" x="400" y="156">变异体</text>
+  <rect class="bx" x="470" y="128" width="250" height="26" rx="5"/>
+  <rect class="bx-r" x="470" y="128" width="96" height="26" rx="5"/><text class="lbl on-r" x="518" y="146" text-anchor="middle">33 / 86</text>
+  <text class="sm on-a" x="380" y="182" text-anchor="middle">差了一倍多 —— 变异测试一眼就看出来了</text>
+  <text class="sm" x="380" y="214" text-anchor="middle">剩下那 33 个，是靠「代码直接崩溃」和保留下来的 pytest.raises 杀死的</text>
+</svg>
+<figcaption>图 14-3　同样的覆盖率，完全不同的验证能力（Python 版实测）</figcaption>
+</figure>
+
+<h3>把它跑起来</h3>
+
+<p>三份示例都只对<strong>领域模型</strong>做变异、只用<strong>单元测试</strong>来检验 —— 原因后面讲。</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-hl="bash"><pre>
+cd examples/java
+mvn test-compile org.pitest:pitest-maven:mutationCoverage
+# 详细报告：target/pit-reports/index.html
+</pre></div>
+<div class="code" data-lang="python" data-hl="bash"><pre>
+cd examples/python
+.venv/bin/pip install -e '.[mutation]'
+.venv/bin/mutmut run
+.venv/bin/mutmut results                 # 列出没被杀死的变异体
+.venv/bin/mutmut show &lt;变异体的名字&gt;      # 看它具体改了什么
+</pre></div>
+<div class="code" data-lang="ts" data-hl="bash"><pre>
+cd examples/ts
+npm install
+npm run mutation
+</pre></div>
+</div>
+
+<p>实测输出（节选）：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-hl="text"><pre>
+&gt;&gt; Line Coverage (for mutated classes only): 54/67 (81%)
+&gt;&gt; 10 tests examined
+&gt;&gt; Generated 39 mutations Killed 29 (74%)
+&gt;&gt; Mutations with no coverage 8. Test strength 94%
+</pre></div>
+<div class="code" data-lang="python" data-hl="text"><pre>
+86/86  🎉 71 🫥 11  ⏰ 0  🤔 0  🙁 4  🔇 0  🧙 0
+
+🎉 被杀死   🫥 没有测试覆盖到   🙁 幸存   ⏰ 超时
+</pre></div>
+<div class="code" data-lang="ts" data-hl="text"><pre>
+-----------|------------------|----------|-----------|------------|----------|----------|
+           | % Mutation score |          |           |            |          |          |
+File       |  total | covered | # killed | # timeout | # survived | # no cov | # errors |
+-----------|--------|---------|----------|-----------|------------|----------|----------|
+All files  |  87.50 |   96.08 |       49 |         0 |          2 |        5 |        0 |
+ domain.ts |  87.50 |   96.08 |       49 |         0 |          2 |        5 |        0 |
+-----------|--------|---------|----------|-----------|------------|----------|----------|
+</pre></div>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 三个工具的数字不能互相比</div>
+  <p>
+    同一份逻辑，mutmut 造了 86 个变异体，PIT 造了 39 个，Stryker 造了 56 个 —— 因为它们各自会做的修改种类不一样。
+    得分分别是 83%、74%、87.5%，这并不说明 TypeScript 版的测试比 Java 版好。
+    <strong>变异得分只能和同一个项目、同一个工具的过去比。</strong>
+  </p>
+</div>
+
+<h3>读报告：幸存者要一个一个看</h3>
+
+<p>变异测试的价值不在那个百分比，而在<strong>没被杀死的名单</strong>。它们分两大类，处理办法不同：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="处理一个没被杀死的变异体的决策流程。先看它所在的代码有没有被测试执行到。没有执行到：这段代码是否值得做单元测试，值得就补测试，由别的测试覆盖或是琐碎代码就排除。执行到了却幸存：这个修改改变了可观察行为吗。没改变就是等价变异体，忽略。改变了：这个行为值得钉住吗，值得就补一个断言或测试，不值得就忽略并记下原因">
+  <rect class="bx-a" x="270" y="10" width="220" height="40" rx="10"/>
+  <text class="ttl on-a" x="380" y="35" text-anchor="middle">一个没被杀死的变异体</text>
+  <path class="ln" d="M380 52 V72" marker-end="url(#ar)"/>
+  <rect class="bx" x="250" y="76" width="260" height="40" rx="10"/>
+  <text class="lbl" x="380" y="101" text-anchor="middle">它所在的那行代码，有测试执行到吗？</text>
+
+  <path class="ln" d="M250 96 H150 V134" marker-end="url(#ar)"/>
+  <text class="sm" x="196" y="88" text-anchor="middle">没有</text>
+  <path class="ln" d="M510 96 H590 V134" marker-end="url(#ar)"/>
+  <text class="sm" x="552" y="88" text-anchor="middle">有，但测试没红</text>
+
+  <rect class="bx" x="30" y="138" width="240" height="44" rx="10"/>
+  <text class="lbl" x="150" y="158" text-anchor="middle">这段代码值得单元测试吗？</text>
+  <text class="sm" x="150" y="174" text-anchor="middle">（第 7 章的四象限）</text>
+  <path class="ln" d="M90 184 V228" marker-end="url(#ar)"/>
+  <path class="ln" d="M210 184 V228" marker-end="url(#ar)"/>
+  <text class="sm" x="72" y="208" text-anchor="middle">值得</text>
+  <text class="sm" x="234" y="208" text-anchor="middle">不值得</text>
+  <rect class="bx-g" x="30" y="232" width="120" height="50" rx="8"/><text class="lbl on-g" x="90" y="254" text-anchor="middle">补测试</text><text class="sm" x="90" y="272" text-anchor="middle">这是真漏洞</text>
+  <rect class="bx-d" x="160" y="232" width="120" height="50" rx="8"/><text class="lbl" x="220" y="254" text-anchor="middle">从范围里排除</text><text class="sm" x="220" y="272" text-anchor="middle">琐碎 / 另有测试</text>
+
+  <rect class="bx" x="440" y="138" width="300" height="44" rx="10"/>
+  <text class="lbl" x="590" y="158" text-anchor="middle">这处修改改变了<tspan font-weight="700">可观察行为</tspan>吗？</text>
+  <text class="sm" x="590" y="174" text-anchor="middle">（第 5 章）</text>
+  <path class="ln" d="M480 184 V228" marker-end="url(#ar)"/>
+  <path class="ln" d="M650 184 V204" marker-end="url(#ar)"/>
+  <text class="sm" x="460" y="208" text-anchor="middle">没有</text>
+  <text class="sm" x="690" y="198" text-anchor="middle">改变了</text>
+  <rect class="bx-d" x="410" y="232" width="140" height="50" rx="8"/><text class="lbl" x="480" y="254" text-anchor="middle">等价变异体</text><text class="sm" x="480" y="272" text-anchor="middle">忽略</text>
+  <rect class="bx" x="566" y="208" width="174" height="34" rx="8"/><text class="lbl" x="653" y="230" text-anchor="middle">这个行为值得钉住吗？</text>
+  <path class="ln" d="M610 244 V270" marker-end="url(#ar)"/>
+  <path class="ln" d="M700 244 V270" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="566" y="274" width="84" height="44" rx="8"/><text class="lbl on-g" x="608" y="294" text-anchor="middle">补断言</text><text class="sm" x="608" y="310" text-anchor="middle">值得</text>
+  <rect class="bx-d" x="660" y="274" width="84" height="44" rx="8"/><text class="lbl" x="702" y="294" text-anchor="middle">忽略</text><text class="sm" x="702" y="310" text-anchor="middle">不值得</text>
+</svg>
+<figcaption>图 14-4　不是每个幸存者都该被杀死。判断标准还是前面那几章的</figcaption>
+</figure>
+
+<p>拿示例上的真实结果走一遍：</p>
+
+<div class="tw">
+<table>
+  <tr><th>没被杀死的变异体（实测）</th><th>属于哪种情况</th><th>怎么处理</th></tr>
+  <tr>
+    <td><code>CompanyFactory.create</code> 里的全部变异体（三个工具都报了「没有覆盖」）</td>
+    <td>单元测试没执行到。它只在集成测试里被用到，而变异测试没有跑集成测试</td>
+    <td><strong>补一个单元测试</strong>。它和 <code>UserFactory</code> 是同一类代码（把数据库的一行还原成对象，没有协作者），而 <code>UserFactory</code> 有单元测试、它没有 —— 这是个真实的不一致</td>
+  </tr>
+  <tr>
+    <td><code>UserFactory.create</code> 里删掉 <code>Precondition.requires(…)</code>（PIT、Stryker 报「幸存」）</td>
+    <td>执行到了，行为也变了：一行残缺的数据不再被拒绝</td>
+    <td><strong>值得补</strong>：加一个「数据不完整时立即失败」的测试，成本很低</td>
+  </tr>
+  <tr>
+    <td>把 <code>"Precondition failed"</code> 改成 <code>""</code> 或别的文本（mutmut 报了 4 个，Stryker 报了 1 个）</td>
+    <td>执行到了，行为严格说也变了：异常里的文字不同</td>
+    <td><strong>不补</strong>。这段文字是给开发者看的，没有调用方依赖它。为它写断言，只会让测试在有人改措辞时变红（第 4 章：假警报）</td>
+  </tr>
+  <tr>
+    <td><code>User.isEmailConfirmed()</code> 的返回值被换成恒为 <code>true</code>（PIT 报「幸存」）</td>
+    <td>一个只被持久化代码使用的取值方法</td>
+    <td><strong>不补单元测试</strong>。琐碎代码（第 7 章）；保存用户时的集成测试会间接验证它</td>
+  </tr>
+</table>
+</div>
+
+<div class="term">
+  <b class="w">等价变异体（equivalent mutant）</b>
+  <p>
+    代码被改了，但程序的行为在任何输入下都没有变化，所以<strong>不可能</strong>有测试能杀死它。
+    例如循环条件 <code>i &lt; n</code> 被改成 <code>i != n</code>，而 <code>i</code> 每次只加 1、从不会跳过 <code>n</code>。
+    工具无法自动识别这种情况，只能靠人看。这也是变异得分几乎不可能、也不应该追求 100% 的原因之一。
+  </p>
+</div>
+
+<h3>代价，以及怎么用才划算</h3>
+
+<p>
+  变异测试很贵：<strong>每个变异体都要跑一遍测试</strong>。示例的领域模型只有一百来行，三个工具分别跑了 39 到 86 轮测试；
+  因为单元测试是毫秒级的，整个过程只要几秒到十几秒。但如果让它去变异控制器、再用需要数据库的集成测试来检验，时间会涨上几个数量级。
+</p>
+
+<div class="tw">
+<table>
+  <tr><th>建议</th><th>为什么</th></tr>
+  <tr><td>只对<strong>领域模型和算法</strong>做变异，只用单元测试检验</td><td>这里的逻辑最密、最值得保护，而单元测试又足够快（第 7 章的左上象限）</td></tr>
+  <tr><td>不放进每次提交都跑的那一步</td><td>太慢会拖累快速反馈（第 4 章）。放在夜间任务里，或者只对本次改动的文件跑</td></tr>
+  <tr><td><strong>不要把变异得分设成指标</strong></td><td>和覆盖率一样（第 1 章）：一旦成为目标，大家就会去写「为了杀变异体」的断言，比如断言异常的措辞</td></tr>
+  <tr><td>把它当成<strong>体检</strong>，不是考试</td><td>隔一段时间跑一次，看幸存者名单里有没有让你意外的东西</td></tr>
+</table>
+</div>
+
+<div class="box key">
+  <div class="t">&#9733; 变异测试只衡量四大支柱里的一根</div>
+  <p>
+    它衡量的是<strong>防止回归</strong>：代码错了，测试会不会红。它完全看不出第二根支柱 —— <strong>抗重构</strong>。
+    一个把所有内部调用都用 Mock 验证了一遍的测试（第 5 章），变异得分会很高，因为你动任何一行它都会红；
+    可它恰恰是最糟糕的那种测试，重构时也一样会红。<strong>高变异得分不等于好测试。</strong>第 15 章会再遇到这一点。
+  </p>
+</div>
+
+<h2 id="property">属性测试：不举例子，描述规律</h2>
+
+<p>
+  前面所有章节写的都是<strong>举例测试</strong>：我挑一个输入，写下期望的输出。它的盲区在于，例子是<strong>我想出来的</strong> ——
+  我没想到的情况，既不会出现在代码里，也不会出现在测试里。
+</p>
+
+<div class="term">
+  <b class="w">属性测试（property-based testing）</b>
+  <p>
+    你不写具体的输入和输出，而是写一条<strong>对所有合法输入都应该成立的规律</strong>（属性），并描述「合法输入长什么样」。
+    框架自动生成成百上千组输入去试；一旦找到让规律不成立的输入，就把它<strong>收缩</strong>成最简单的反例交给你。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="举例测试是在输入空间里挑几个点，每个点配一个具体的期望值。属性测试是对整片区域声明一条规律，由框架在区域里随机撒点检查，并特别照顾边界上的值">
+  <rect class="bx" x="14" y="16" width="356" height="208" rx="12"/>
+  <text class="ttl" x="30" y="42">举例测试</text>
+  <text class="sm" x="30" y="62">我挑几个点，每个点写一个具体的期望值</text>
+  <rect class="bx-d" x="30" y="76" width="324" height="106" rx="8"/>
+  <text class="sm" x="342" y="94" text-anchor="end">所有可能的输入</text>
+  <circle cx="90" cy="120" r="6" fill="var(--blue)"/><text class="sm on-b" x="102" y="124">客户 &rarr; 员工</text>
+  <circle cx="200" cy="150" r="6" fill="var(--blue)"/><text class="sm on-b" x="212" y="154">员工 &rarr; 客户</text>
+  <circle cx="110" cy="164" r="6" fill="var(--blue)"/><text class="sm on-b" x="122" y="168">同一个邮箱</text>
+  <text class="sm" x="30" y="206">优点：具体、好读，本身就是文档（第 3 章）</text>
+
+  <rect class="bx" x="390" y="16" width="356" height="208" rx="12"/>
+  <text class="ttl" x="406" y="42">属性测试</text>
+  <text class="sm" x="406" y="62">我声明一条规律，框架在整片区域里找反例</text>
+  <rect class="bx-g" x="406" y="76" width="324" height="106" rx="8"/>
+  <text class="sm on-g" x="718" y="94" text-anchor="end">规律：对这里面的每个点都成立</text>
+  <g fill="var(--green)">
+    <circle cx="430" cy="110" r="3"/><circle cx="470" cy="150" r="3"/><circle cx="500" cy="118" r="3"/><circle cx="540" cy="166" r="3"/>
+    <circle cx="570" cy="128" r="3"/><circle cx="610" cy="156" r="3"/><circle cx="650" cy="114" r="3"/><circle cx="690" cy="148" r="3"/>
+    <circle cx="455" cy="170" r="3"/><circle cx="520" cy="140" r="3"/><circle cx="595" cy="108" r="3"/><circle cx="665" cy="170" r="3"/>
+    <circle cx="412" cy="82" r="3"/><circle cx="724" cy="176" r="3"/><circle cx="412" cy="176" r="3"/>
+  </g>
+  <text class="sm" x="406" y="206">优点：会试到你想不到的输入，尤其是边界</text>
+</svg>
+<figcaption>图 14-5　举例测试验证几个点；属性测试验证一片区域</figcaption>
+</figure>
+
+<div class="tw">
+<table>
+  <tr><th>语言</th><th>常用的库</th><th>安装</th></tr>
+  <tr><td>Java</td><td>jqwik（一个 JUnit 5 平台上的测试引擎）</td><td>依赖 <code>net.jqwik:jqwik</code>，<code>test</code> 作用域</td></tr>
+  <tr><td>Python</td><td>Hypothesis（和 pytest 直接配合）</td><td><code>pip install hypothesis</code></td></tr>
+  <tr><td>TypeScript</td><td>fast-check（在任何测试框架里都能用）</td><td><code>npm install -D fast-check</code></td></tr>
+</table>
+</div>
+
+<h3>给「修改邮箱」写三条属性</h3>
+
+<p>先想规律，不想例子。关于 <code>User.changeEmail</code>，不管具体输入是什么，下面三件事都应该成立：</p>
+
+<ol>
+  <li>改完之后，用户是员工，<strong>当且仅当</strong>新邮箱属于公司域名。</li>
+  <li>公司员工数的变化量，等于「这个用户现在是不是员工」减去「他原来是不是员工」。</li>
+  <li>把同一个修改再做一遍，什么都不会发生：不产生新事件，员工数不变。</li>
+</ol>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+package crm.domain;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.List;
+import net.jqwik.api.*;
+import net.jqwik.api.constraints.IntRange;
+
+class UserPropertyTests {
+    static final String COMPANY_DOMAIN = "mycorp.com";
+
+    static String emailAt(String local, boolean corporate) {
+        return local + "@" + (corporate ? COMPANY_DOMAIN : "gmail.com");
+    }
+
+    static User aUser(String local, boolean isEmployee) {
+        UserType type = isEmployee ? UserType.EMPLOYEE : UserType.CUSTOMER;
+        return new User(1, emailAt(local, isEmployee), type, false);
+    }
+
+    // 生成器：描述「合法的输入长什么样」
+    @Provide
+    Arbitrary&lt;String&gt; localParts() {
+        return Arbitraries.strings().withCharRange('a', 'z').ofMinLength(1).ofMaxLength(8);
+    }
+
+    @Property
+    void a_user_is_an_employee_exactly_when_the_new_email_is_corporate(
+            @ForAll("localParts") String local, @ForAll boolean wasEmployee,
+            @ForAll @IntRange(min = 1, max = 1000) int employees,
+            @ForAll("localParts") String newLocal, @ForAll boolean corporate) {
+        User user = aUser(local, wasEmployee);
+        Company company = new Company(COMPANY_DOMAIN, employees);
+
+        user.changeEmail(emailAt(newLocal, corporate), company);
+
+        assertThat(user.getType() == UserType.EMPLOYEE).isEqualTo(corporate);
+    }
+
+    @Property
+    void the_number_of_employees_follows_the_user_type(
+            @ForAll("localParts") String local, @ForAll boolean wasEmployee,
+            @ForAll @IntRange(min = 1, max = 1000) int employees,
+            @ForAll("localParts") String newLocal, @ForAll boolean corporate) {
+        User user = aUser(local, wasEmployee);
+        Company company = new Company(COMPANY_DOMAIN, employees);
+
+        user.changeEmail(emailAt(newLocal, corporate), company);
+
+        assertThat(company.getNumberOfEmployees() - employees)
+            .isEqualTo((corporate ? 1 : 0) - (wasEmployee ? 1 : 0));
+    }
+
+    @Property
+    void repeating_the_same_change_does_nothing(
+            @ForAll("localParts") String local, @ForAll boolean wasEmployee,
+            @ForAll @IntRange(min = 1, max = 1000) int employees,
+            @ForAll("localParts") String newLocal, @ForAll boolean corporate) {
+        User user = aUser(local, wasEmployee);
+        Company company = new Company(COMPANY_DOMAIN, employees);
+        String newEmail = emailAt(newLocal, corporate);
+        user.changeEmail(newEmail, company);
+        List&lt;DomainEvent&gt; events = user.getDomainEvents();
+        int number = company.getNumberOfEmployees();
+
+        user.changeEmail(newEmail, company);
+
+        assertThat(user.getDomainEvents()).isEqualTo(events);
+        assertThat(company.getNumberOfEmployees()).isEqualTo(number);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+from hypothesis import given, strategies as st
+
+from crm.domain import Company, User, UserType
+
+COMPANY_DOMAIN = "mycorp.com"
+
+
+def email_at(local: str, corporate: bool) -&gt; str:
+    return f"{local}@{COMPANY_DOMAIN if corporate else 'gmail.com'}"
+
+
+def a_user(local: str, is_employee: bool) -&gt; User:
+    user_type = UserType.EMPLOYEE if is_employee else UserType.CUSTOMER
+    return User(1, email_at(local, is_employee), user_type, False)
+
+
+# 生成器：描述「合法的输入长什么样」
+local_parts = st.from_regex(r"[a-z]{1,8}", fullmatch=True)
+users = st.builds(a_user, local_parts, st.booleans())
+companies = st.builds(Company, st.just(COMPANY_DOMAIN), st.integers(1, 1000))
+
+
+@given(users, companies, local_parts, st.booleans())
+def test_user_is_an_employee_exactly_when_the_new_email_is_corporate(
+        user, company, new_local, corporate):
+    user.change_email(email_at(new_local, corporate), company)
+
+    assert (user.type == UserType.EMPLOYEE) == corporate
+
+
+@given(users, companies, local_parts, st.booleans())
+def test_number_of_employees_follows_the_user_type(
+        user, company, new_local, corporate):
+    was_employee = user.type == UserType.EMPLOYEE
+    before = company.number_of_employees
+
+    user.change_email(email_at(new_local, corporate), company)
+
+    assert company.number_of_employees - before == int(corporate) - int(was_employee)
+
+
+@given(users, companies, local_parts, st.booleans())
+def test_repeating_the_same_change_does_nothing(
+        user, company, new_local, corporate):
+    new_email = email_at(new_local, corporate)
+    user.change_email(new_email, company)
+    events = list(user.domain_events)
+    number = company.number_of_employees
+
+    user.change_email(new_email, company)
+
+    assert user.domain_events == events
+    assert company.number_of_employees == number
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+import fc from 'fast-check'
+import { expect, test } from 'vitest'
+import { Company, User, UserType } from '../../src/domain.js'
+
+const COMPANY_DOMAIN = 'mycorp.com'
+
+const emailAt = (local: string, corporate: boolean) =&gt;
+  `${local}@${corporate ? COMPANY_DOMAIN : 'gmail.com'}`
+
+// 生成器：描述「合法的输入长什么样」
+const localPart = fc.stringMatching(/^[a-z]{1,8}$/)
+const scenario = fc.record({
+  local: localPart,
+  wasEmployee: fc.boolean(),
+  employees: fc.integer({ min: 1, max: 1000 }),
+  newLocal: localPart,
+  corporate: fc.boolean(),
+})
+type Scenario = typeof scenario extends fc.Arbitrary&lt;infer T&gt; ? T : never
+
+function arrange(s: Scenario) {
+  const type = s.wasEmployee ? UserType.Employee : UserType.Customer
+  return {
+    user: new User(1, emailAt(s.local, s.wasEmployee), type, false),
+    company: new Company(COMPANY_DOMAIN, s.employees),
+    newEmail: emailAt(s.newLocal, s.corporate),
+  }
+}
+
+test('a user is an employee exactly when the new email is corporate', () =&gt; {
+  fc.assert(fc.property(scenario, (s) =&gt; {
+    const { user, company, newEmail } = arrange(s)
+
+    user.changeEmail(newEmail, company)
+
+    expect(user.type === UserType.Employee).toBe(s.corporate)
+  }))
+})
+
+test('the number of employees follows the user type', () =&gt; {
+  fc.assert(fc.property(scenario, (s) =&gt; {
+    const { user, company, newEmail } = arrange(s)
+
+    user.changeEmail(newEmail, company)
+
+    expect(company.numberOfEmployees - s.employees)
+      .toBe(Number(s.corporate) - Number(s.wasEmployee))
+  }))
+})
+
+test('repeating the same change does nothing', () =&gt; {
+  fc.assert(fc.property(scenario, (s) =&gt; {
+    const { user, company, newEmail } = arrange(s)
+    user.changeEmail(newEmail, company)
+    const events = [...user.domainEvents]
+    const employees = company.numberOfEmployees
+
+    user.changeEmail(newEmail, company)
+
+    expect(user.domainEvents).toEqual(events)
+    expect(company.numberOfEmployees).toBe(employees)
+  }))
+})
+</pre></div>
+</div>
+
+<p>
+  每条属性默认会被检查一百到一千次（jqwik 默认 1000 次，Hypothesis 和 fast-check 默认 100 次），三条在示例的领域模型上全部通过，耗时不到一秒。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 关键技巧：让输入「自带答案」</div>
+  <p>
+    第 11 章警告过「把领域知识泄漏进测试」：如果测试里写 <code>expected = email.split("@")[1] == domain</code>，那只是把生产代码抄了一遍，两边会一起错。
+    属性测试尤其容易掉进这个坑，因为你手上没有具体的期望值。
+  </p>
+  <p>
+    上面的写法绕开了它：不是先生成一个邮箱、再去<strong>算</strong>它是不是公司邮箱，而是先生成一个布尔值 <code>corporate</code>，
+    再用它<strong>拼出</strong>一个邮箱。这样期望的答案在构造输入时就已经知道了，测试里不需要任何判断逻辑。
+  </p>
+</div>
+
+<h3>它真的能抓到 Bug 吗</h3>
+
+<p>
+  拿第 0 章练习里的那个错误来验收：把生产代码里 <code>delta</code> 的正负号写反。实测 Hypothesis 立刻让第二条属性失败，并给出了一个收缩到最简的反例：
+</p>
+
+<div class="code" data-lang="text"><pre>
+E       assert (0 - 1) == (1 - 0)
+E       Failing test case: test_number_of_employees_follows_the_user_type(
+E           user=a_user(
+E               'a',  # or any other generated value
+E               False,
+E           ),
+E           company=Company('mycorp.com', 1),  # or any other generated value
+E           new_local='a',  # or any other generated value
+E           corporate=True,
+E       )
+</pre></div>
+
+<p>
+  读法：一个客户（<code>False</code>）把邮箱改成公司邮箱（<code>corporate=True</code>），员工数本该加 1，结果减了 1。
+  注释 <code>or any other generated value</code> 是在告诉你：邮箱前缀和初始员工数取什么都一样会失败 —— 问题只和「客户变员工」有关。
+</p>
+
+<h3>收缩：从一团乱码到最小反例</h3>
+
+<p>
+  再写一条关于 <code>Company.isEmailCorporate</code> 的属性：<strong>任何以 <code>@mycorp.com</code> 结尾的地址，都是公司邮箱。</strong>
+  这次故意把生成器放宽，让 <code>@</code> 前面那一段可以是<strong>任意</strong>非空字符串：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="text"><pre>
+E       assert (0 - 1) == (1 - 0)
+E       Failing test case: test_number_of_employees_follows_the_user_type(
+E           user=a_user(
+E               'a',  # or any other generated value
+E               False,
+E           ),
+E           company=Company('mycorp.com', 1),  # or any other generated value
+E           new_local='a',  # or any other generated value
+E           corporate=True,
+E       )
+</pre></div>
+<div class="code" data-lang="java"><pre>
+@Property
+void any_address_at_the_company_domain_is_corporate(
+        @ForAll @StringLength(min = 1) String local) {
+    Company company = new Company("mycorp.com", 1);
+
+    assertThat(company.isEmailCorporate(local + "@mycorp.com")).isTrue();
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+@given(local=st.text(min_size=1))
+def test_any_address_at_the_company_domain_is_corporate(local):
+    company = Company("mycorp.com", 1)
+
+    assert company.is_email_corporate(local + "@mycorp.com")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('any address at the company domain is corporate', () =&gt; {
+  fc.assert(fc.property(fc.string({ minLength: 1 }), (local) =&gt; {
+    const company = new Company('mycorp.com', 1)
+
+    expect(company.isEmailCorporate(local + '@mycorp.com')).toBe(true)
+  }))
+})
+</pre></div>
+</div>
+
+<p>三种语言里它都失败了（实测输出节选）：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-hl="text"><pre>
+tries = 613                   | # of calls to property
+seed = -3766072505812040337   | random seed to reproduce generated values
+
+Shrunk Sample (13 steps)
+------------------------
+  arg0: "@"
+
+Original Sample
+---------------
+  arg0:
+    "륲앴⬱⊯﹁좈►戫鋰쑵覩ì颽踸ꀏ罄켁岙㥋苫妒덅㨕㊒ヿ箺屰쀰ᮒ뻍⎳ᬠᐼ醽聳迉잣磷嶕……
+</pre></div>
+<div class="code" data-lang="python" data-hl="text"><pre>
+E       AssertionError: assert False
+E        +  where False = is_email_corporate(('@' + '@mycorp.com'))
+E       Failing test case: test_any_address_at_the_company_domain_is_corporate(
+E           local='@',
+E       )
+</pre></div>
+<div class="code" data-lang="ts" data-hl="text"><pre>
+Error: Property failed after 8 tests
+{ seed: -1162268326, path: "7:10:7", endOnFailure: true }
+Counterexample: ["@ "]
+Shrunk 2 time(s)
+</pre></div>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 190" role="img" aria-label="收缩的过程：框架随机试到第 613 次时碰到一个很长的乱码字符串让属性失败，然后不断尝试更短更简单的输入，只要仍然失败就继续缩，最终得到只有一个 at 符号的最小反例">
+  <rect class="bx-r" x="14" y="50" width="220" height="70" rx="10"/>
+  <text class="lbl on-r" x="124" y="74" text-anchor="middle">第 613 次：碰到一个反例</text>
+  <text class="mono sm" x="124" y="96" text-anchor="middle">"륲앴⬱⊯﹁좈►戫鋰쑵…@…"</text>
+  <text class="sm" x="124" y="112" text-anchor="middle">几十个字符，看不出原因</text>
+
+  <path class="ln-a" d="M236 85 H276" marker-end="url(#ar-a)"/>
+  <rect class="bx-a" x="280" y="50" width="200" height="70" rx="10"/>
+  <text class="lbl on-a" x="380" y="74" text-anchor="middle">收缩</text>
+  <text class="sm" x="380" y="94" text-anchor="middle">删掉一半还失败吗？再删……</text>
+  <text class="sm" x="380" y="110" text-anchor="middle">换成更「小」的字符还失败吗？</text>
+
+  <path class="ln-a" d="M482 85 H522" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="526" y="50" width="220" height="70" rx="10"/>
+  <text class="lbl on-g" x="636" y="74" text-anchor="middle">13 步之后：最小反例</text>
+  <text class="mono ttl on-g" x="636" y="98" text-anchor="middle">"@"</text>
+  <text class="sm" x="636" y="112" text-anchor="middle">一眼看出：前缀里有 @</text>
+
+  <text class="sm" x="380" y="160" text-anchor="middle">被测的地址是 <tspan class="mono">@@mycorp.com</tspan>：按 @ 切开后，第二段是空字符串，不等于 <tspan class="mono">mycorp.com</tspan></text>
+</svg>
+<figcaption>图 14-6　收缩把「框架碰巧撞到的反例」变成「人能看懂的反例」（数字来自 jqwik 的实测）</figcaption>
+</figure>
+
+<p>
+  原因一目了然：<code>isEmailCorporate</code> 用的是「按 <code>@</code> 切开，取第二段」，前缀里再出现一个 <code>@</code> 就取错了位置。
+  三种语言的示例里，手写的举例测试都没有覆盖这个情况 —— 写测试的人没想到。
+</p>
+
+<h3>拿到反例之后</h3>
+
+<p>反例不一定意味着生产代码有 Bug。先回答一个问题：<strong>这个输入是合法的吗？</strong></p>
+
+<div class="tw">
+<table>
+  <tr><th>结论</th><th>该做什么</th></tr>
+  <tr>
+    <td><strong>合法</strong>，代码处理错了</td>
+    <td>修代码。并且把这个反例<strong>抄成一个普通的举例测试</strong>永久留下 —— 它有名字、好读，而且不依赖随机数还能不能再撞到它</td>
+  </tr>
+  <tr>
+    <td><strong>不合法</strong>，系统本就不该收到它</td>
+    <td>收窄生成器，让它只产生合法输入；同时确认「不合法的输入在哪里被挡住」。这里的答案是：目前<strong>没有任何地方</strong>在校验邮箱格式 —— 属性测试顺带暴露了一个缺失的校验</td>
+  </tr>
+</table>
+</div>
+
+<p>
+  这也是属性测试的一个副作用：它逼你把<strong>「合法输入」的定义</strong>明明白白写出来（就是那个生成器）。很多时候，写不出生成器，说明需求本身就没想清楚。
+</p>
+
+<h3>常见的属性长什么样</h3>
+
+<p>「我想不出属性」是最常见的卡点。下面是几种现成的套路：</p>
+
+<div class="tw">
+<table>
+  <tr><th>套路</th><th>说的是</th><th>例子</th></tr>
+  <tr><td>不变式</td><td>不管怎么操作，某个条件始终成立</td><td>员工数永远不为负；用户类型永远和邮箱域名一致</td></tr>
+  <tr><td>往返</td><td>做一次再反着做一次，回到原样</td><td>序列化再反序列化；把邮箱改掉再改回来，员工数复原</td></tr>
+  <tr><td>幂等</td><td>做两次和做一次效果一样</td><td>上面的第三条属性；重复投递同一条消息</td></tr>
+  <tr><td>对照</td><td>和一个简单但明显正确的实现比结果</td><td>优化过的排序 vs. 标准库的排序；新实现 vs. 被替换的旧实现（第 12 章）</td></tr>
+  <tr><td>输入变，输出跟着变</td><td>不知道正确答案，但知道输入变化时答案该怎么变</td><td>给购物车多加一件商品，总价不会变少</td></tr>
+  <tr><td>不崩溃</td><td>对任何合法输入都不抛出意料之外的异常</td><td>解析器对任意字符串要么成功、要么给出明确的格式错误</td></tr>
+</table>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 单独一条属性往往很弱</div>
+  <p>
+    「往返」属性就是个例子：把 <code>delta</code> 的正负号写反，客户变员工时减 1、员工变客户时加 1，改过去再改回来，员工数<strong>照样复原</strong>。这条属性完全发现不了那个 Bug。
+    属性要成组地写，互相补位；而且<strong>不要用它取代举例测试</strong> —— 那几个具体的例子是最好读的文档（第 3 章）。
+  </p>
+</div>
+
+<h3>几个要留意的地方</h3>
+
+<div class="tw">
+<table>
+  <tr><th>问题</th><th>怎么办</th></tr>
+  <tr><td>输入是随机的，失败了下次还能重现吗</td><td>能。失败时框架会打印<strong>种子</strong>（见上面 jqwik 和 fast-check 的输出），用它可以原样重跑；Hypothesis 和 jqwik 还会把失败的输入存到本地，下次优先重试。但最稳妥的仍然是把反例抄成举例测试</td></tr>
+  <tr><td>它算不算「不稳定测试」（第 13 章）</td><td>如果它时红时绿，说明存在让属性不成立的输入 —— 那是真问题，不是测试不稳定。修掉它，而不是减少运行次数</td></tr>
+  <tr><td>生成器写得太窄</td><td>只生成了「我想到的」那些输入，等于白写。看一眼框架的统计信息，确认生成的值够分散</td></tr>
+  <tr><td>生成器写得太宽</td><td>大量输入不合法，反例全是噪音。宽一点起步是好的（像上面那样能发现缺失的校验），但最终要收敛到「合法输入」</td></tr>
+  <tr><td>Java：属性测试没有被执行</td><td>实测踩到的坑：类名叫 <code>UserProperties</code> 时，Maven 默认只运行名字以 <code>Test</code> / <code>Tests</code> 等结尾的类，于是整个类被<strong>悄悄跳过</strong>，构建照样成功。改名为 <code>UserPropertyTests</code>，或者在 Surefire 里配置包含规则</td></tr>
+</table>
+</div>
+
+<p>
+  属性测试最适合的对象，和基于输出的测试一样（第 6 章）：<strong>没有协作者的纯逻辑</strong> —— 领域模型、计算、解析、转换。
+  对一个要读写数据库的控制器跑一千次随机输入，既慢，也很难说清规律是什么。
+</p>
+
+<h2 id="together">两种工具放在一起看</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="两种工具的对比和位置。属性测试改变的是测试的输入，是测试集的一部分，随单元测试每次都跑。变异测试改变的是被测的生产代码，不是测试，而是对测试集的检查，定期跑。两者都最适合用在领域模型上">
+  <rect class="bx-a" x="270" y="92" width="220" height="66" rx="12"/>
+  <text class="ttl on-a" x="380" y="118" text-anchor="middle">领域模型</text>
+  <text class="sm" x="380" y="138" text-anchor="middle">没有协作者的纯逻辑</text>
+  <text class="sm" x="380" y="152" text-anchor="middle">两种工具都用在这里</text>
+
+  <rect class="bx-b" x="14" y="20" width="220" height="210" rx="12"/>
+  <text class="ttl on-b" x="124" y="46" text-anchor="middle">属性测试</text>
+  <text class="sm" x="124" y="72" text-anchor="middle">改变的是<tspan font-weight="700">输入</tspan></text>
+  <text class="sm" x="124" y="96" text-anchor="middle">生产代码不动，</text>
+  <text class="sm" x="124" y="112" text-anchor="middle">喂给它成百上千种输入</text>
+  <text class="sm" x="124" y="142" text-anchor="middle">找的是：<tspan font-weight="700">代码</tspan>里的漏洞</text>
+  <text class="sm" x="124" y="172" text-anchor="middle">它本身就是测试，</text>
+  <text class="sm" x="124" y="188" text-anchor="middle">和单元测试一起每次都跑</text>
+  <text class="sm on-b" x="124" y="214" text-anchor="middle">毫秒到秒级</text>
+  <path class="ln-b" d="M236 125 H266" marker-end="url(#ar-b)"/>
+
+  <rect class="bx-p" x="526" y="20" width="220" height="210" rx="12"/>
+  <text class="ttl on-p" x="636" y="46" text-anchor="middle">变异测试</text>
+  <text class="sm" x="636" y="72" text-anchor="middle">改变的是<tspan font-weight="700">代码</tspan></text>
+  <text class="sm" x="636" y="96" text-anchor="middle">测试不动，</text>
+  <text class="sm" x="636" y="112" text-anchor="middle">喂给它几十上百个改坏的版本</text>
+  <text class="sm" x="636" y="142" text-anchor="middle">找的是：<tspan font-weight="700">测试</tspan>里的漏洞</text>
+  <text class="sm" x="636" y="172" text-anchor="middle">它不是测试，是对测试的体检，</text>
+  <text class="sm" x="636" y="188" text-anchor="middle">定期跑，或只对改动的文件跑</text>
+  <text class="sm on-p" x="636" y="214" text-anchor="middle">秒到小时级</text>
+  <path class="ln-p" d="M524 125 H494" marker-end="url(#ar-p)"/>
+</svg>
+<figcaption>图 14-7　一个变输入，一个变代码；一个查代码，一个查测试</figcaption>
+</figure>
+
+<p>
+  它们可以互相检验：给示例加上那三条属性之后再跑变异测试，可以看看有没有哪个原先幸存的变异体被属性杀死了；
+  反过来，一条新写的属性到底有没有用，把生产代码改错一处、看它红不红，就知道了（上面验收 <code>delta</code> 时做的正是这件事）。
+</p>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>覆盖率回答「哪些代码被执行过」。它回答不了「代码错了测试会不会发现」和「有没有没想到的输入」。</li>
+  <li><strong>变异测试</strong>自动把生产代码改错一处，看有没有测试变红。变红 = 被杀死；全绿 = 幸存，说明这里没被验证。</li>
+  <li>实测：把断言全删掉，覆盖率保持 97% 不变，杀死的变异体却从 71 个掉到 33 个（共 86 个）。</li>
+  <li>报告的价值在<strong>幸存者名单</strong>，不在百分比。逐个判断：是真漏洞就补测试；是琐碎代码、等价变异体、或不值得钉住的行为（比如异常的措辞）就放过。</li>
+  <li>不同工具的变异得分不能互相比；也<strong>不要把它设成指标</strong> —— 理由和覆盖率一样。</li>
+  <li>变异测试只衡量<strong>防止回归</strong>。和实现绑死的脆弱测试得分反而高，它看不出来。</li>
+  <li><strong>属性测试</strong>写的是对所有合法输入都成立的规律，由框架生成大量输入去找反例，并把反例<strong>收缩</strong>到最简。</li>
+  <li>写属性时不要把实现抄一遍。让输入「自带答案」：先定答案，再据此构造输入。</li>
+  <li>拿到反例先问「这个输入合法吗」。合法就修代码，并把反例抄成举例测试留下；不合法就收窄生成器，并检查不合法的输入在哪里被挡住。</li>
+  <li>两者都最适合用在领域模型上：逻辑密集，测试又足够快。属性测试随单元测试每次都跑；变异测试定期跑。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>团队决定「变异得分必须达到 90% 才能合并」。这和第 1 章批评的覆盖率指标有什么相同和不同？</summary>
+  <p>相同：一旦成为目标，大家会去优化数字本身 —— 给异常措辞、日志文本、琐碎的取值方法补断言，换来更多假警报。不同：变异得分比覆盖率更难「刷」，因为没有断言的测试杀不死变异体。但它仍然只衡量四根支柱里的一根，而且等价变异体让 100% 在原理上就达不到。把它当体检，别当门槛。</p>
+</details>
+<details class="quiz">
+  <summary>一个变异体把 <code>logger.debug("loaded user " + id)</code> 整行删掉了，测试全绿。要补测试吗？</summary>
+  <p>不要。这是给开发者看的诊断日志（第 8 章），不是可观察行为。为它写断言会把测试和实现细节绑在一起。更好的做法是在变异测试的配置里把日志调用排除掉。</p>
+</details>
+<details class="quiz">
+  <summary>同事写的属性是：<code>assert is_email_corporate(email) == (email.split("@")[1] == domain)</code>。问题在哪？</summary>
+  <p>它把生产代码的算法原样抄进了测试（第 11 章：泄漏领域知识）。两边用的是同一个有缺陷的切分方式，所以对 <code>@@mycorp.com</code> 这样的输入会「一起错」，属性照样成立。应该让输入自带答案：先决定「这是不是公司邮箱」，再据此拼出地址。</p>
+</details>
+<details class="quiz">
+  <summary>属性测试找到一个反例并且你已经修好了代码。为什么还建议把这个反例另外写成一个普通的举例测试？</summary>
+  <p>因为属性测试下次不一定还会生成到这个输入；举例测试则永远在那儿，有一个说明业务含义的名字，失败时一眼就知道是哪种情况回归了。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>在配套示例里挑一种语言，照本章的命令跑一遍变异测试，对照你自己看到的幸存者名单。</li>
+    <li>按图 14-4 处理其中两个：给 <code>CompanyFactory</code> 补一个单元测试，给 <code>UserFactory</code> 补一个「数据不完整时失败」的测试。重跑，看数字怎么变。</li>
+    <li>把本章的三条属性放进示例的单元测试目录跑起来。然后把 <code>delta</code> 的正负号写反，看哪条属性会红、给出的最小反例是什么。</li>
+    <li>给 <code>Company.changeNumberOfEmployees</code> 写一条不变式属性：无论以什么顺序做多少次合法的增减，员工数都不会是负数。想一想「合法的增减」该怎么生成。</li>
+    <li>针对 <code>@@mycorp.com</code> 那个反例做个决定：邮箱格式应该在哪一层校验？写出你的理由，再对照第 7 章关于前置条件的讨论。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

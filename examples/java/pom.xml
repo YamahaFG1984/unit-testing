@@ -74,6 +74,27 @@
           </execution>
         </executions>
       </plugin>
+      <!-- 变异测试（第 14 章）：mvn test-compile org.pitest:pitest-maven:mutationCoverage -->
+      <plugin>
+        <groupId>org.pitest</groupId>
+        <artifactId>pitest-maven</artifactId>
+        <version>1.17.4</version>
+        <dependencies>
+          <dependency>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-junit5-plugin</artifactId>
+            <version>1.2.1</version>
+          </dependency>
+        </dependencies>
+        <configuration>
+          <targetClasses>
+            <param>crm.domain.*</param>
+          </targetClasses>
+          <targetTests>
+            <param>crm.domain.*</param>
+          </targetTests>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 

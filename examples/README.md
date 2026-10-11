@@ -65,6 +65,19 @@ cd ts     && npm run coverage
 只跑单元测试时，你会看到领域模型的覆盖率接近 100%，而控制器和仓储是 0% ——
 这不是疏漏：它们由集成测试覆盖（教程第 7、8 章）。
 
+### 变异测试（教程第 14 章）
+
+覆盖率只说明代码被执行过；变异测试检查的是「代码被改错时，测试会不会发现」。
+三份示例都只对领域模型做变异、只用单元测试来检验：
+
+```bash
+cd python && .venv/bin/pip install -e '.[mutation]' && .venv/bin/mutmut run   # 之后用 mutmut results 看幸存者
+cd java   && mvn test-compile org.pitest:pitest-maven:mutationCoverage         # 报告在 target/pit-reports/index.html
+cd ts     && npm run mutation
+```
+
+mutmut 依赖 `fork`，在 Windows 上需要通过 WSL 运行。
+
 ## 代码怎么对应教程
 
 | 代码 | 教程章节 |
