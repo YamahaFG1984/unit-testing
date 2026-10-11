@@ -1,0 +1,987 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 12 章 · 给遗留代码补测试 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="12">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 12 章 · 补充</span>
+<h1>给遗留代码补测试</h1>
+<p class="lede">
+  前面十一章讲的都是「怎样把代码设计成好测的」。可你手上多半已经有一堆<strong>写好了、在线上跑着、一个测试都没有</strong>的代码。
+  这一章讲怎么从那里出发，一步一步、不出事故地走到第 7 章描述的那个样子。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解遗留代码的「先有鸡还是先有蛋」困境，以及怎么打破它</li>
+    <li>会写<strong>特征测试</strong>：先把现有行为钉住</li>
+    <li>会找<strong>接缝</strong>：用最小、最安全的改动让代码变得可测</li>
+    <li>把决策逻辑抽出来，换成真正有价值的单元测试，然后<strong>拆掉脚手架</strong></li>
+    <li>改不动的时候，用「新芽」和「包装」的办法加新功能</li>
+    <li>知道该从哪里下手，以及哪里不值得碰</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<div class="box note">
+  <div class="t">&#9432; 这一章不是原书内容</div>
+  <p>
+    本章是教程的补充。其中「特征测试」「接缝」「新芽 / 包装」这些手法出自 Michael Feathers 的
+    《修改代码的艺术》（<em>Working Effectively with Legacy Code</em>），这里把它们和本教程的框架
+    （四大支柱、四象限、受管 / 不受管依赖）接了起来。本章的代码是示意性的片段，重构的终点就是仓库里可运行的
+    <a href="https://github.com/YamahaFG1984/unit-testing/tree/main/examples"><code>examples/</code></a>。
+  </p>
+</div>
+
+<h2 id="dilemma">遗留代码的两难</h2>
+
+<div class="term">
+  <b class="w">遗留代码（legacy code）</b>
+  <p>Feathers 的定义很干脆：<strong>没有测试的代码</strong>。和它有多老、是谁写的、用什么技术无关。</p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="遗留代码的恶性循环：想安全地修改代码需要先有测试；想写测试需要先修改代码让它可测；而没有测试就不敢修改代码">
+  <rect class="bx-r" x="60" y="30" width="250" height="64" rx="12"/>
+  <text class="ttl on-r" x="185" y="58" text-anchor="middle">想安全地改代码</text>
+  <text class="sm" x="185" y="78" text-anchor="middle">得先有测试兜底</text>
+  <rect class="bx-r" x="450" y="30" width="250" height="64" rx="12"/>
+  <text class="ttl on-r" x="575" y="58" text-anchor="middle">想写测试</text>
+  <text class="sm" x="575" y="78" text-anchor="middle">得先把代码改得能测</text>
+  <path class="ln-r" style="stroke-width:2.2" d="M312 50 H446" marker-end="url(#ar-r)"/>
+  <path class="ln-r" style="stroke-width:2.2" d="M446 78 H314" marker-end="url(#ar-r)"/>
+  <text class="sm on-r" x="380" y="42" text-anchor="middle">需要</text>
+  <text class="sm on-r" x="380" y="98" text-anchor="middle">需要</text>
+
+  <rect class="bx-g" x="60" y="140" width="640" height="80" rx="12"/>
+  <text class="ttl on-g" x="76" y="166">打破循环的两个办法，配合着用</text>
+  <text class="lbl" x="76" y="190">① 先写一种<tspan font-weight="700">不需要改代码</tspan>就能写的测试 —— 粗、慢、但能兜底（特征测试）</text>
+  <text class="lbl" x="76" y="210">② 只做<tspan font-weight="700">小到几乎不可能出错</tspan>的改动来打开缺口（接缝）</text>
+</svg>
+<figcaption>图 12-1　先有鸡还是先有蛋</figcaption>
+</figure>
+
+<p>整个过程分四步。注意第一步写的测试到最后大部分会被<strong>删掉</strong> —— 它们是脚手架，不是建筑本身。</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="四步路线：钉住现有行为、打开接缝、抽出决策逻辑并写单元测试、拆掉脚手架只留一个集成测试">
+  <rect class="bx" x="14" y="30" width="170" height="130" rx="12"/>
+  <text class="ttl" x="99" y="56" text-anchor="middle">① 钉住</text>
+  <text class="sm" x="99" y="80" text-anchor="middle">不改代码，</text>
+  <text class="sm" x="99" y="98" text-anchor="middle">从最外层写特征测试</text>
+  <text class="sm" x="99" y="124" text-anchor="middle">记录「它现在做什么」</text>
+  <text class="sm on-b" x="99" y="146" text-anchor="middle">得到：安全网</text>
+
+  <rect class="bx" x="200" y="30" width="170" height="130" rx="12"/>
+  <text class="ttl" x="285" y="56" text-anchor="middle">② 开缝</text>
+  <text class="sm" x="285" y="80" text-anchor="middle">用极小的改动，</text>
+  <text class="sm" x="285" y="98" text-anchor="middle">让依赖可以被替换</text>
+  <text class="sm" x="285" y="124" text-anchor="middle">每一步都跑特征测试</text>
+  <text class="sm on-b" x="285" y="146" text-anchor="middle">得到：下手的地方</text>
+
+  <rect class="bx-a" x="386" y="30" width="170" height="130" rx="12"/>
+  <text class="ttl on-a" x="471" y="56" text-anchor="middle">③ 抽取</text>
+  <text class="sm" x="471" y="80" text-anchor="middle">把决策逻辑抽成</text>
+  <text class="sm" x="471" y="98" text-anchor="middle">没有协作者的代码</text>
+  <text class="sm" x="471" y="124" text-anchor="middle">给它写单元测试</text>
+  <text class="sm on-a" x="471" y="146" text-anchor="middle">得到：真正有价值的测试</text>
+
+  <rect class="bx-g" x="572" y="30" width="174" height="130" rx="12"/>
+  <text class="ttl on-g" x="659" y="56" text-anchor="middle">④ 拆脚手架</text>
+  <text class="sm" x="659" y="80" text-anchor="middle">删掉大部分特征测试，</text>
+  <text class="sm" x="659" y="98" text-anchor="middle">留一个集成测试</text>
+  <text class="sm" x="659" y="124" text-anchor="middle">走最长的成功路径</text>
+  <text class="sm on-g" x="659" y="146" text-anchor="middle">得到：第 7、8 章的形状</text>
+
+  <path class="ln" d="M186 95 H196" marker-end="url(#ar)"/>
+  <path class="ln" d="M372 95 H382" marker-end="url(#ar)"/>
+  <path class="ln" d="M558 95 H568" marker-end="url(#ar)"/>
+  <text class="sm" x="380" y="190" text-anchor="middle">全程守一条纪律：<tspan font-weight="700">重构和改行为，一次只做一样</tspan></text>
+</svg>
+<figcaption>图 12-2　本章的路线图</figcaption>
+</figure>
+
+<h2 id="start">起点：一段典型的遗留代码</h2>
+
+<p>
+  还是那个「修改用户邮箱」的功能，但这次是它最糟糕的样子：一个方法从头干到尾，数据库和消息总线都通过<strong>静态调用</strong>直接访问，
+  用户类型是魔法数字，没有任何测试。它已经在线上跑了三年。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class UserService {
+    public void changeEmail(int userId, String newEmail) {
+        Object[] data = Database.getUserById(userId);
+        String email = (String) data[1];
+        int type = (int) data[2];                       // 1 = 客户，2 = 员工
+
+        if (email.equals(newEmail)) return;
+
+        Object[] companyData = Database.getCompany();
+        String companyDomain = (String) companyData[0];
+        int numberOfEmployees = (int) companyData[1];
+
+        int newType = newEmail.split("@")[1].equals(companyDomain) ? 2 : 1;
+        if (type != newType) {
+            Database.saveCompany(numberOfEmployees + (newType == 2 ? 1 : -1));
+        }
+
+        Database.saveUser(userId, newEmail, newType);
+        MessageBus.sendEmailChangedMessage(userId, newEmail);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class UserService:
+    def change_email(self, user_id: int, new_email: str) -&gt; None:
+        data = database.get_user_by_id(user_id)
+        email = data[1]
+        user_type = data[2]                             # 1 = 客户，2 = 员工
+
+        if email == new_email:
+            return
+
+        company_data = database.get_company()
+        company_domain = company_data[0]
+        number_of_employees = company_data[1]
+
+        new_type = 2 if new_email.split("@")[1] == company_domain else 1
+        if user_type != new_type:
+            database.save_company(number_of_employees + (1 if new_type == 2 else -1))
+
+        database.save_user(user_id, new_email, new_type)
+        message_bus.send_email_changed_message(user_id, new_email)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class UserService {
+  async changeEmail(userId: number, newEmail: string): Promise&lt;void&gt; {
+    const data = await Database.getUserById(userId)
+    const email = data[1] as string
+    const type = data[2] as number                      // 1 = 客户，2 = 员工
+
+    if (email === newEmail) return
+
+    const companyData = await Database.getCompany()
+    const companyDomain = companyData[0] as string
+    const numberOfEmployees = companyData[1] as number
+
+    const newType = newEmail.split('@')[1] === companyDomain ? 2 : 1
+    if (type !== newType) {
+      await Database.saveCompany(numberOfEmployees + (newType === 2 ? 1 : -1))
+    }
+
+    await Database.saveUser(userId, newEmail, newType)
+    MessageBus.sendEmailChangedMessage(userId, newEmail)
+  }
+}
+</pre></div>
+</div>
+
+<p>用第 7 章的四象限看，它稳稳地落在右上角：有业务决策，又直接碰两个进程外依赖。<strong>过度复杂的代码。</strong></p>
+
+<h2 id="pin">第一步：用特征测试钉住现有行为</h2>
+
+<div class="term">
+  <b class="w">特征测试（characterization test）</b>
+  <p>
+    描述代码<strong>现在实际怎么表现</strong>的测试 —— 不是它「应该」怎么表现。
+    它的期望值不来自需求文档，而来自<strong>运行代码看到的结果</strong>。目的只有一个：之后你动代码时，任何行为变化都会被发现。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="普通测试的期望值来自需求，回答代码对不对；特征测试的期望值来自代码当前的实际输出，回答行为变没变">
+  <rect class="bx" x="14" y="16" width="356" height="178" rx="12"/>
+  <text class="ttl" x="30" y="42">普通测试</text>
+  <rect class="bx-b" x="30" y="56" width="130" height="40" rx="8"/><text class="lbl on-b" x="95" y="81" text-anchor="middle">需求 / 规格</text>
+  <path class="ln" d="M162 76 H206" marker-end="url(#ar)"/>
+  <rect class="bx" x="210" y="56" width="144" height="40" rx="8"/><text class="lbl" x="282" y="81" text-anchor="middle">期望值</text>
+  <text class="sm" x="30" y="124">回答的问题：代码<tspan font-weight="700">对不对</tspan>？</text>
+  <text class="sm" x="30" y="146">前提：你知道「对」是什么样</text>
+  <text class="sm" x="30" y="168">长期保留</text>
+
+  <rect class="bx-a" x="390" y="16" width="356" height="178" rx="12"/>
+  <text class="ttl on-a" x="406" y="42">特征测试</text>
+  <rect class="bx" x="406" y="56" width="130" height="40" rx="8"/><text class="lbl" x="471" y="81" text-anchor="middle">代码现在的输出</text>
+  <path class="ln-a" d="M538 76 H582" marker-end="url(#ar-a)"/>
+  <rect class="bx" x="586" y="56" width="144" height="40" rx="8"/><text class="lbl" x="658" y="81" text-anchor="middle">期望值</text>
+  <text class="sm" x="406" y="124">回答的问题：行为<tspan font-weight="700">变没变</tspan>？</text>
+  <text class="sm" x="406" y="146">前提：只要代码能跑起来就行</text>
+  <text class="sm on-a" x="406" y="168">临时的脚手架，重构完大部分要删</text>
+</svg>
+<figcaption>图 12-3　两种测试的期望值来源不同，寿命也不同</figcaption>
+</figure>
+
+<h3>怎么写</h3>
+
+<ol class="steps">
+  <li><strong>从尽量靠外的入口调用。</strong>不要为了测试去改被测代码 —— 这一步的全部意义就在于「不改」。对上面的例子，就是直接调 <code>UserService.changeEmail</code>，连一个真的测试数据库。</li>
+  <li><strong>先写一个肯定错的断言</strong>（比如断言邮箱等于 <code>"???"</code>），运行，让失败信息把实际值告诉你。</li>
+  <li><strong>把实际值抄进断言</strong>，让测试变绿。</li>
+  <li><strong>换一组输入，重复。</strong>直到你打算改动的那片代码的每条分支都被走到。</li>
+</ol>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// 脚手架测试：粗、慢、直接对着数据库的行断言 —— 现在这样就对了
+@Test
+void characterization_corporate_to_non_corporate() {
+    insertUserRow(1, "user@mycorp.com", 2);
+    insertCompanyRow("mycorp.com", 1);
+
+    new UserService().changeEmail(1, "new@gmail.com");
+
+    assertThat(readUserRow(1)).containsExactly(1, "new@gmail.com", 1);
+    assertThat(readCompanyRow()).containsExactly("mycorp.com", 0);
+}
+
+@Test
+void characterization_same_email() {
+    insertUserRow(1, "user@mycorp.com", 2);
+    insertCompanyRow("mycorp.com", 1);
+
+    new UserService().changeEmail(1, "user@mycorp.com");
+
+    assertThat(readUserRow(1)).containsExactly(1, "user@mycorp.com", 2);
+    assertThat(readCompanyRow()).containsExactly("mycorp.com", 1);
+}
+
+// ……再补上：非公司 → 公司、类型不变 这两种情况
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# 脚手架测试：粗、慢、直接对着数据库的行断言 —— 现在这样就对了
+def test_characterization_corporate_to_non_corporate():
+    insert_user_row(1, "user@mycorp.com", 2)
+    insert_company_row("mycorp.com", 1)
+
+    UserService().change_email(1, "new@gmail.com")
+
+    assert read_user_row(1) == (1, "new@gmail.com", 1)
+    assert read_company_row() == ("mycorp.com", 0)
+
+
+def test_characterization_same_email():
+    insert_user_row(1, "user@mycorp.com", 2)
+    insert_company_row("mycorp.com", 1)
+
+    UserService().change_email(1, "user@mycorp.com")
+
+    assert read_user_row(1) == (1, "user@mycorp.com", 2)
+    assert read_company_row() == ("mycorp.com", 1)
+
+
+# ……再补上：非公司 → 公司、类型不变 这两种情况
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// 脚手架测试：粗、慢、直接对着数据库的行断言 —— 现在这样就对了
+test('characterization: corporate to non corporate', async () =&gt; {
+  await insertUserRow(1, 'user@mycorp.com', 2)
+  await insertCompanyRow('mycorp.com', 1)
+
+  await new UserService().changeEmail(1, 'new@gmail.com')
+
+  expect(await readUserRow(1)).toEqual([1, 'new@gmail.com', 1])
+  expect(await readCompanyRow()).toEqual(['mycorp.com', 0])
+})
+
+test('characterization: same email', async () =&gt; {
+  await insertUserRow(1, 'user@mycorp.com', 2)
+  await insertCompanyRow('mycorp.com', 1)
+
+  await new UserService().changeEmail(1, 'user@mycorp.com')
+
+  expect(await readUserRow(1)).toEqual([1, 'user@mycorp.com', 2])
+  expect(await readCompanyRow()).toEqual(['mycorp.com', 1])
+})
+
+// ……再补上：非公司 → 公司、类型不变 这两种情况
+</pre></div>
+</div>
+
+<p>
+  用四大支柱打分，这些测试并不好：慢、直接读数据库的行（和表结构耦合）、名字也没有业务含义。
+  <strong>没关系。</strong>它们此刻只需要在一件事上得高分：<strong>防止回归</strong>。等更好的测试就位，它们就退场。
+</p>
+
+<div class="box tip">
+  <div class="t">&#128161; 怎么知道钉够了没有</div>
+  <p>
+    这是覆盖率工具最正当的用途（第 4 章：「分析测试时可以用白盒方法」）：
+    跑一遍特征测试，看你<strong>打算改动的那片代码</strong>里还有哪些分支没被走到，为它们补输入。
+    不需要覆盖整个系统，只需要覆盖你要动的地方。
+  </p>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 钉的时候发现了 Bug 怎么办</div>
+  <p>
+    <strong>照原样钉住，不要顺手修。</strong>写个注释、开个工单。原因有二：
+    这个「Bug」可能早有别的代码或下游系统在依赖它；而且你现在的任务是重构，
+    <strong>重构和改行为必须分开做</strong> —— 否则测试红了，你分不清是重构弄坏的，还是修 Bug 引起的。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 输出很大的时候：黄金样本</div>
+  <p>
+    如果被测代码产出的是一大段文本、报表或 JSON，逐字段断言太累。可以把当前输出整个存成文件（黄金样本，golden master），
+    测试只比较「这次的输出和存下来的是否一模一样」。很多语言有现成的「快照测试」「approval testing」工具。
+    同样，它是脚手架：对任何格式变化都敏感，不适合长期保留。
+  </p>
+</div>
+
+<h3>这里卡住了：消息总线怎么办</h3>
+
+<p>
+  数据库的最终状态可以直接查。但 <code>MessageBus.sendEmailChangedMessage</code> 是个静态调用，测试既拦不住它（跑测试会真的往总线发消息），
+  也看不到它发了什么。要钉住这部分行为，必须先在代码上开一个小口子。
+</p>
+
+<h2 id="seam">第二步：打开接缝</h2>
+
+<div class="term">
+  <b class="w">接缝（seam）</b>
+  <p>代码里这样的一个位置：你可以<strong>不修改那个位置本身</strong>，就改变那里发生的行为。构造函数参数、可被重写的方法、可被替换的模块，都是接缝。</p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="没有接缝时，代码直接焊死在静态调用上，测试无法介入。打开接缝后，依赖从外面传进来：生产环境传真实实现，行为不变；测试传一个替身">
+  <text class="ttl on-r" x="185" y="22" text-anchor="middle">&#10007; 焊死的</text>
+  <rect class="bx" x="40" y="36" width="290" height="60" rx="10"/>
+  <text class="lbl" x="56" y="60">UserService.changeEmail()</text>
+  <text class="mono sm" x="56" y="80">MessageBus.send…(…)　← 写死在方法里</text>
+  <path class="ln-r" d="M185 98 V128" marker-end="url(#ar-r)"/>
+  <rect class="bx-r" x="100" y="132" width="170" height="40" rx="8"/><text class="lbl on-r" x="185" y="157" text-anchor="middle">真实消息总线</text>
+  <text class="sm" x="185" y="196" text-anchor="middle">测试插不进手</text>
+
+  <path class="ln-a" d="M344 100 H400" marker-end="url(#ar-a)"/>
+  <text class="sm on-a" x="372" y="90" text-anchor="middle">开缝</text>
+
+  <text class="ttl on-g" x="580" y="22" text-anchor="middle">&#10003; 从外面传进来</text>
+  <rect class="bx" x="420" y="36" width="320" height="60" rx="10"/>
+  <text class="lbl" x="436" y="60">UserService(messages).changeEmail()</text>
+  <text class="mono sm" x="436" y="80">this.messages.send…(…)</text>
+  <path class="ln" d="M500 98 V128" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M660 98 V128" marker-end="url(#ar-g)"/>
+  <rect class="bx" x="420" y="132" width="160" height="40" rx="8"/><text class="lbl" x="500" y="157" text-anchor="middle">真实消息总线</text>
+  <rect class="bx-g" x="596" y="132" width="144" height="40" rx="8"/><text class="lbl on-g" x="668" y="157" text-anchor="middle">测试里的 Spy</text>
+  <text class="sm" x="500" y="196" text-anchor="middle">生产环境：默认值，行为不变</text>
+  <text class="sm" x="668" y="196" text-anchor="middle">测试：能看到发了什么</text>
+</svg>
+<figcaption>图 12-4　接缝让同一行代码在不同场合连到不同的东西上</figcaption>
+</figure>
+
+<p>
+  开缝的改动要<strong>小到几乎不可能出错</strong>，因为这一步是在没有（或只有部分）测试保护的情况下做的。最稳妥的做法是「加参数，给默认值」——
+  现有的调用方一行都不用改：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public interface MessageSender {
+    void sendEmailChangedMessage(int userId, String newEmail);
+}
+
+public class UserService {
+    private final MessageSender messages;
+
+    public UserService() {                                   // 原来的构造方式照旧可用
+        this(MessageBus::sendEmailChangedMessage);
+    }
+
+    public UserService(MessageSender messages) {             // 新开的口子
+        this.messages = messages;
+    }
+
+    public void changeEmail(int userId, String newEmail) {
+        /* 前面一字不改 */
+        messages.sendEmailChangedMessage(userId, newEmail);  // 只把这一行从静态调用换掉
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class UserService:
+    def __init__(self, send_email_changed=None) -&gt; None:
+        # 不传就用原来的那个 —— 现有调用方 UserService() 不受影响
+        self._send_email_changed = (
+            send_email_changed or message_bus.send_email_changed_message)
+
+    def change_email(self, user_id: int, new_email: str) -&gt; None:
+        ...  # 前面一字不改
+        self._send_email_changed(user_id, new_email)     # 只把这一行从全局调用换掉
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export type SendEmailChanged = (userId: number, newEmail: string) =&gt; void
+
+export class UserService {
+  constructor(
+    // 不传就用原来的那个 —— 现有调用方 new UserService() 不受影响
+    private readonly sendEmailChanged: SendEmailChanged =
+      MessageBus.sendEmailChangedMessage,
+  ) {}
+
+  async changeEmail(userId: number, newEmail: string): Promise&lt;void&gt; {
+    /* 前面一字不改 */
+    this.sendEmailChanged(userId, newEmail)              // 只把这一行从静态调用换掉
+  }
+}
+</pre></div>
+</div>
+
+<p>现在特征测试可以传一个会记录调用的替身进去，把「发了几条消息、内容是什么」也钉住：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void characterization_corporate_to_non_corporate() {
+    insertUserRow(1, "user@mycorp.com", 2);
+    insertCompanyRow("mycorp.com", 1);
+    var sent = new ArrayList&lt;String&gt;();
+
+    new UserService((id, email) -&gt; sent.add(id + ":" + email))
+        .changeEmail(1, "new@gmail.com");
+
+    assertThat(readUserRow(1)).containsExactly(1, "new@gmail.com", 1);
+    assertThat(readCompanyRow()).containsExactly("mycorp.com", 0);
+    assertThat(sent).containsExactly("1:new@gmail.com");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_characterization_corporate_to_non_corporate():
+    insert_user_row(1, "user@mycorp.com", 2)
+    insert_company_row("mycorp.com", 1)
+    sent = []
+
+    UserService(lambda user_id, email: sent.append((user_id, email))) \
+        .change_email(1, "new@gmail.com")
+
+    assert read_user_row(1) == (1, "new@gmail.com", 1)
+    assert read_company_row() == ("mycorp.com", 0)
+    assert sent == [(1, "new@gmail.com")]
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('characterization: corporate to non corporate', async () =&gt; {
+  await insertUserRow(1, 'user@mycorp.com', 2)
+  await insertCompanyRow('mycorp.com', 1)
+  const sent: Array&lt;[number, string]&gt; = []
+
+  await new UserService((id, email) =&gt; sent.push([id, email]))
+    .changeEmail(1, 'new@gmail.com')
+
+  expect(await readUserRow(1)).toEqual([1, 'new@gmail.com', 1])
+  expect(await readCompanyRow()).toEqual(['mycorp.com', 0])
+  expect(sent).toEqual([[1, 'new@gmail.com']])
+})
+</pre></div>
+</div>
+
+<div class="box key">
+  <div class="t">&#9733; 接缝只开在不受管依赖上</div>
+  <p>
+    按第 8 章的分类：<strong>消息总线是不受管依赖</strong>，需要替换，所以要开缝。
+    <strong>数据库是受管依赖</strong>，特征测试直接用真的测试库，<strong>不需要</strong>为它开缝、更不要 Mock 它。
+    少开一个缝，就少一处没有测试保护的改动。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 实在不想动构造函数？</div>
+  <p>
+    各语言都有在运行时替换模块 / 静态成员的手段（Python 的 <code>unittest.mock.patch</code>、Vitest 的 <code>vi.mock</code>、Mockito 的 <code>mockStatic</code>）。
+    它们可以<strong>完全不改生产代码</strong>就拦住那个静态调用，作为脚手架阶段的权宜之计完全可以。
+    但别停在那儿：第 11 章说过，隐藏的依赖是问题本身，最终还是要把它变成显式的。
+  </p>
+</div>
+
+<h2 id="extract">第三步：把决策逻辑抽出来</h2>
+
+<p>
+  有了安全网，可以开始真正的重构了。方向就是第 6、7 章讲的：<strong>把「做决定」和「动手」分开</strong>。
+  盯着那个方法看，哪几行是在做决定？
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="原方法里读写数据库的代码和做业务判断的代码交织在一起。抽取之后，业务判断变成一个纯函数，原方法只剩读数据、调用纯函数、写数据三步">
+  <text class="ttl" x="175" y="22" text-anchor="middle">抽取前：一个方法，两种代码交织</text>
+  <rect class="bx" x="30" y="34" width="290" height="230" rx="10"/>
+  <rect class="bx-b" x="44" y="46" width="262" height="26" rx="5"/><text class="sm on-b" x="56" y="64">读：用户</text>
+  <rect class="bx-a" x="44" y="76" width="262" height="26" rx="5"/><text class="sm on-a" x="56" y="94">判断：邮箱没变就返回</text>
+  <rect class="bx-b" x="44" y="106" width="262" height="26" rx="5"/><text class="sm on-b" x="56" y="124">读：公司</text>
+  <rect class="bx-a" x="44" y="136" width="262" height="26" rx="5"/><text class="sm on-a" x="56" y="154">判断：新类型是员工还是客户</text>
+  <rect class="bx-a" x="44" y="166" width="262" height="26" rx="5"/><text class="sm on-a" x="56" y="184">判断：员工数要不要变、变多少</text>
+  <rect class="bx-b" x="44" y="196" width="262" height="26" rx="5"/><text class="sm on-b" x="56" y="214">写：公司、用户</text>
+  <rect class="bx-b" x="44" y="226" width="262" height="26" rx="5"/><text class="sm on-b" x="56" y="244">发：消息</text>
+
+  <path class="ln-a" d="M334 150 H392" marker-end="url(#ar-a)"/>
+
+  <text class="ttl" x="575" y="22" text-anchor="middle">抽取后：外壳 + 核心</text>
+  <rect class="bx-b" x="410" y="34" width="150" height="230" rx="10"/>
+  <text class="lbl on-b" x="485" y="58" text-anchor="middle">UserService</text>
+  <text class="sm" x="485" y="76" text-anchor="middle">（外壳）</text>
+  <text class="sm" x="485" y="110" text-anchor="middle">① 读用户、读公司</text>
+  <text class="sm" x="485" y="150" text-anchor="middle">② 调用 decide(…)</text>
+  <text class="sm" x="485" y="190" text-anchor="middle">③ 按结果写库、发消息</text>
+  <text class="sm on-b" x="485" y="244" text-anchor="middle">特征测试继续罩着</text>
+
+  <rect class="bx-a" x="590" y="74" width="156" height="150" rx="10"/>
+  <text class="lbl on-a" x="668" y="98" text-anchor="middle">decideEmailChange</text>
+  <text class="sm" x="668" y="116" text-anchor="middle">（核心 · 纯函数）</text>
+  <text class="sm" x="668" y="146" text-anchor="middle">三条判断都在这</text>
+  <text class="sm" x="668" y="164" text-anchor="middle">输入、输出都是值</text>
+  <text class="sm on-g" x="668" y="204" text-anchor="middle">&#9654; 单元测试</text>
+  <path class="ln-a" d="M562 146 H586" marker-end="url(#ar-a)" marker-start="url(#ar-a)"/>
+</svg>
+<figcaption>图 12-5　蓝色是「动手」，橙色是「做决定」。把橙色的抽成一块</figcaption>
+</figure>
+
+<p>
+  对遗留代码，最稳的第一步是抽成一个<strong>纯函数</strong>（第 6 章的函数式核心）：输入是值，输出也是值，不碰任何外部东西。
+  这比一上来就设计 <code>User</code>、<code>Company</code> 这些类风险小得多 —— 那可以等逻辑有了测试之后再做。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public record EmailChangeDecision(boolean changed, int newType, int newNumberOfEmployees) {}
+
+public final class EmailChangePolicy {
+    public static EmailChangeDecision decide(
+            String currentEmail, int currentType, String newEmail,
+            String companyDomain, int numberOfEmployees) {
+
+        if (currentEmail.equals(newEmail)) {
+            return new EmailChangeDecision(false, currentType, numberOfEmployees);
+        }
+
+        int newType = newEmail.split("@")[1].equals(companyDomain) ? 2 : 1;
+        int delta = currentType == newType ? 0 : (newType == 2 ? 1 : -1);
+
+        return new EmailChangeDecision(true, newType, numberOfEmployees + delta);
+    }
+}
+
+// UserService 变成了「读 — 决定 — 写」
+public void changeEmail(int userId, String newEmail) {
+    Object[] data = Database.getUserById(userId);
+    Object[] companyData = Database.getCompany();
+
+    EmailChangeDecision decision = EmailChangePolicy.decide(
+        (String) data[1], (int) data[2], newEmail,
+        (String) companyData[0], (int) companyData[1]);
+
+    if (!decision.changed()) return;
+
+    if (decision.newNumberOfEmployees() != (int) companyData[1]) {
+        Database.saveCompany(decision.newNumberOfEmployees());
+    }
+    Database.saveUser(userId, newEmail, decision.newType());
+    messages.sendEmailChangedMessage(userId, newEmail);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+@dataclass(frozen=True)
+class EmailChangeDecision:
+    changed: bool
+    new_type: int
+    new_number_of_employees: int
+
+
+def decide_email_change(current_email: str, current_type: int, new_email: str,
+                        company_domain: str, number_of_employees: int) -&gt; EmailChangeDecision:
+    if current_email == new_email:
+        return EmailChangeDecision(False, current_type, number_of_employees)
+
+    new_type = 2 if new_email.split("@")[1] == company_domain else 1
+    delta = 0 if current_type == new_type else (1 if new_type == 2 else -1)
+
+    return EmailChangeDecision(True, new_type, number_of_employees + delta)
+
+
+# UserService 变成了「读 — 决定 — 写」
+def change_email(self, user_id: int, new_email: str) -&gt; None:
+    data = database.get_user_by_id(user_id)
+    company_data = database.get_company()
+
+    decision = decide_email_change(
+        data[1], data[2], new_email, company_data[0], company_data[1])
+
+    if not decision.changed:
+        return
+
+    if decision.new_number_of_employees != company_data[1]:
+        database.save_company(decision.new_number_of_employees)
+    database.save_user(user_id, new_email, decision.new_type)
+    self._send_email_changed(user_id, new_email)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export interface EmailChangeDecision {
+  readonly changed: boolean
+  readonly newType: number
+  readonly newNumberOfEmployees: number
+}
+
+export function decideEmailChange(
+  currentEmail: string, currentType: number, newEmail: string,
+  companyDomain: string, numberOfEmployees: number,
+): EmailChangeDecision {
+  if (currentEmail === newEmail) {
+    return { changed: false, newType: currentType, newNumberOfEmployees: numberOfEmployees }
+  }
+
+  const newType = newEmail.split('@')[1] === companyDomain ? 2 : 1
+  const delta = currentType === newType ? 0 : newType === 2 ? 1 : -1
+
+  return { changed: true, newType, newNumberOfEmployees: numberOfEmployees + delta }
+}
+
+// UserService 变成了「读 — 决定 — 写」
+async changeEmail(userId: number, newEmail: string): Promise&lt;void&gt; {
+  const data = await Database.getUserById(userId)
+  const companyData = await Database.getCompany()
+
+  const decision = decideEmailChange(
+    data[1] as string, data[2] as number, newEmail,
+    companyData[0] as string, companyData[1] as number)
+
+  if (!decision.changed) return
+
+  if (decision.newNumberOfEmployees !== companyData[1]) {
+    await Database.saveCompany(decision.newNumberOfEmployees)
+  }
+  await Database.saveUser(userId, newEmail, decision.newType)
+  this.sendEmailChanged(userId, newEmail)
+}
+</pre></div>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 留意：这次抽取悄悄改了一个行为</div>
+  <p>
+    原来的代码是「邮箱没变就<strong>不去读公司</strong>」；抽取后变成了无条件先读公司。最终状态和发出的消息都没变，特征测试照样全绿 ——
+    因为与受管依赖（自己的数据库）的交互次数本来就是实现细节，不该被钉住（第 5、8 章）。
+    这正是第 7 章讲的取舍：为了让决策集中，多付出一次查询。如果那次查询很贵，就用 CanExecute/Execute 模式把「要不要继续」先问出来。
+    <strong>关键是你得知道自己做了这个取舍。</strong>
+  </p>
+</div>
+
+<p>每做一小步就跑一遍特征测试。它们全绿，说明行为没变。然后，给新抽出来的核心写<strong>真正的</strong>单元测试 —— 基于输出、毫秒级、没有任何准备工作：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void changing_email_from_corporate_to_non_corporate() {
+    EmailChangeDecision decision = EmailChangePolicy.decide(
+        "user@mycorp.com", 2, "new@gmail.com", "mycorp.com", 1);
+
+    assertThat(decision).isEqualTo(new EmailChangeDecision(true, 1, 0));
+}
+
+@Test
+void changing_email_to_the_same_one_changes_nothing() {
+    EmailChangeDecision decision = EmailChangePolicy.decide(
+        "user@mycorp.com", 2, "user@mycorp.com", "mycorp.com", 1);
+
+    assertThat(decision.changed()).isFalse();
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_changing_email_from_corporate_to_non_corporate():
+    decision = decide_email_change(
+        "user@mycorp.com", 2, "new@gmail.com", "mycorp.com", 1)
+
+    assert decision == EmailChangeDecision(True, 1, 0)
+
+
+def test_changing_email_to_the_same_one_changes_nothing():
+    decision = decide_email_change(
+        "user@mycorp.com", 2, "user@mycorp.com", "mycorp.com", 1)
+
+    assert decision.changed is False
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changing email from corporate to non corporate', () =&gt; {
+  const decision = decideEmailChange(
+    'user@mycorp.com', 2, 'new@gmail.com', 'mycorp.com', 1)
+
+  expect(decision).toEqual({ changed: true, newType: 1, newNumberOfEmployees: 0 })
+})
+
+test('changing email to the same one changes nothing', () =&gt; {
+  const decision = decideEmailChange(
+    'user@mycorp.com', 2, 'user@mycorp.com', 'mycorp.com', 1)
+
+  expect(decision.changed).toBe(false)
+})
+</pre></div>
+</div>
+
+<p>
+  到这里逻辑已经有了像样的保护。接下来的事就是第 7 章的内容了，可以从容地做：
+  把魔法数字换成 <code>UserType</code>，把这个纯函数演化成 <code>User.changeEmail(newEmail, company)</code> 和 <code>Company</code>，
+  引入领域事件，把静态的 <code>Database</code> 换成显式注入的仓储和事务……每一步都有测试罩着。
+  终点就是仓库里 <code>examples/</code> 的样子。
+</p>
+
+<h2 id="remove">第四步：拆掉脚手架</h2>
+
+<p>
+  这一步最容易被忘掉。特征测试完成了使命，但它们慢、和表结构耦合、名字没有业务含义 —— 留着就是第 1 章说的「净价值为负的测试」。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="测试组合的三个阶段：一开始只有几个粗重的特征测试；中间阶段特征测试和新写的单元测试并存；最后删掉特征测试，留下大量单元测试和一个集成测试">
+  <text class="ttl" x="130" y="22" text-anchor="middle">第一步之后</text>
+  <rect class="bx-a" x="40" y="60" width="180" height="90" rx="8"/>
+  <text class="lbl on-a" x="130" y="98" text-anchor="middle">特征测试 &times; 4</text>
+  <text class="sm" x="130" y="118" text-anchor="middle">粗、慢、连数据库</text>
+  <text class="sm" x="130" y="176" text-anchor="middle">有安全网了，</text>
+  <text class="sm" x="130" y="194" text-anchor="middle">但每次跑都要等</text>
+
+  <path class="ln" d="M236 105 H264" marker-end="url(#ar)"/>
+
+  <text class="ttl" x="380" y="22" text-anchor="middle">第三步之后</text>
+  <rect class="bx-a" x="290" y="40" width="180" height="50" rx="8"/><text class="lbl on-a" x="380" y="70" text-anchor="middle">特征测试 &times; 4</text>
+  <rect class="bx-g" x="290" y="98" width="180" height="52" rx="8"/><text class="lbl on-g" x="380" y="120" text-anchor="middle">单元测试 &times; N</text><text class="sm" x="380" y="138" text-anchor="middle">覆盖抽出来的核心</text>
+  <text class="sm" x="380" y="176" text-anchor="middle">两套并存：</text>
+  <text class="sm" x="380" y="194" text-anchor="middle">同一批逻辑被测了两遍</text>
+
+  <path class="ln" d="M486 105 H514" marker-end="url(#ar)"/>
+
+  <text class="ttl" x="630" y="22" text-anchor="middle">第四步之后</text>
+  <polygon class="bx-b" points="600,40 660,40 680,80 580,80"/>
+  <text class="sm on-b" x="630" y="66" text-anchor="middle">集成 &times; 1</text>
+  <polygon class="bx-g" points="580,84 680,84 716,150 544,150"/>
+  <text class="lbl on-g" x="630" y="114" text-anchor="middle">单元测试 &times; N</text>
+  <text class="sm" x="630" y="134" text-anchor="middle">所有边界情况</text>
+  <text class="sm" x="630" y="176" text-anchor="middle">金字塔成形；</text>
+  <text class="sm" x="630" y="194" text-anchor="middle">日常只跑单元测试</text>
+</svg>
+<figcaption>图 12-6　测试组合的演变。特征测试只在中间阶段存在</figcaption>
+</figure>
+
+<ul>
+  <li><strong>边界情况</strong>（邮箱相同、类型不变、公司 &rarr; 非公司……）现在都由单元测试覆盖了 &rarr; 对应的特征测试<strong>删掉</strong>。</li>
+  <li><strong>挑最长的那条成功路径</strong>，把它那个特征测试<strong>改写</strong>成第 8–10 章那样的集成测试：通过仓储读数据而不是直接查表，在系统边缘验证消息，起一个有业务含义的名字。</li>
+  <li>删之前做一次检查：故意在生产代码里改错一个地方（比如把 <code>+1</code> 改成 <code>-1</code>），确认新测试会红。这是对新安全网的验收。</li>
+</ul>
+
+<h2 id="sprout">改不动的时候：新芽与包装</h2>
+
+<p>
+  有时你没有时间做上面这一整套，只是要在一坨遗留代码里<strong>加一个新功能</strong>。这时至少可以做到：<strong>新写的代码有测试，并且不让遗留代码变得更糟。</strong>
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="新芽方法：把新逻辑写成独立的、有测试的函数，在遗留方法里只加一行调用。包装方法：新建一个方法包住原方法，在调用前后加新行为，原方法不动">
+  <rect class="bx" x="14" y="16" width="356" height="188" rx="12"/>
+  <text class="ttl" x="30" y="42">新芽（Sprout）</text>
+  <text class="sm" x="30" y="62">新逻辑写在外面，遗留代码里只插一行调用</text>
+  <rect class="bx-d" x="30" y="78" width="150" height="110" rx="8"/>
+  <text class="sm" x="105" y="98" text-anchor="middle">遗留方法（不动）</text>
+  <path class="ln-d" d="M46 112 H164 M46 126 H164"/>
+  <rect class="bx-g" x="40" y="134" width="130" height="20" rx="4"/><text class="sm on-g" x="105" y="149" text-anchor="middle">+ 一行调用</text>
+  <path class="ln-d" d="M46 166 H164 M46 178 H164"/>
+  <path class="ln-g" d="M172 144 H216" marker-end="url(#ar-g)"/>
+  <rect class="bx-g" x="220" y="112" width="134" height="64" rx="8"/>
+  <text class="lbl on-g" x="287" y="136" text-anchor="middle">新函数</text>
+  <text class="sm" x="287" y="156" text-anchor="middle">纯逻辑 + 单元测试</text>
+
+  <rect class="bx" x="390" y="16" width="356" height="188" rx="12"/>
+  <text class="ttl" x="406" y="42">包装（Wrap）</text>
+  <text class="sm" x="406" y="62">新行为加在原方法的「前面或后面」</text>
+  <rect class="bx-g" x="406" y="78" width="324" height="110" rx="8"/>
+  <text class="lbl on-g" x="418" y="100">新方法（调用方改成调它）</text>
+  <rect class="bx-g" x="420" y="110" width="296" height="20" rx="4" style="fill:var(--panel)"/><text class="sm on-g" x="568" y="125" text-anchor="middle">新行为（有测试）</text>
+  <rect class="bx-d" x="420" y="136" width="296" height="20" rx="4"/><text class="sm" x="568" y="151" text-anchor="middle">调用原来的遗留方法（一行不改）</text>
+  <rect class="bx-g" x="420" y="162" width="296" height="20" rx="4" style="fill:var(--panel)"/><text class="sm on-g" x="568" y="177" text-anchor="middle">新行为（有测试）</text>
+</svg>
+<figcaption>图 12-7　两种「不重构也能安全加功能」的办法</figcaption>
+</figure>
+
+<p>
+  例子：新需求是「<strong>已确认的邮箱不能再改</strong>」。不要把判断直接揉进那个长方法，而是把它写成一个独立的、有测试的小函数，再在遗留方法开头插一行：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// 新芽：独立的、有测试的新逻辑
+public final class EmailChangeRules {
+    public static String canChangeEmail(boolean isEmailConfirmed) {
+        return isEmailConfirmed ? "Can't change a confirmed email" : null;
+    }
+}
+
+@Test
+void a_confirmed_email_cannot_be_changed() {
+    assertThat(EmailChangeRules.canChangeEmail(true))
+        .isEqualTo("Can't change a confirmed email");
+}
+
+// 遗留方法里只加这两行（返回类型从 void 改成能带回错误信息的 String）
+public String changeEmail(int userId, String newEmail) {
+    Object[] data = Database.getUserById(userId);
+    String error = EmailChangeRules.canChangeEmail((boolean) data[3]);   // ← 新增
+    if (error != null) return error;                                     // ← 新增
+    /* 其余不动 */
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# 新芽：独立的、有测试的新逻辑
+def can_change_email(is_email_confirmed: bool) -&gt; str | None:
+    return "Can't change a confirmed email" if is_email_confirmed else None
+
+
+def test_a_confirmed_email_cannot_be_changed():
+    assert can_change_email(True) == "Can't change a confirmed email"
+
+
+# 遗留方法里只加这三行
+def change_email(self, user_id: int, new_email: str) -&gt; str:
+    data = database.get_user_by_id(user_id)
+    error = can_change_email(data[3])                    # ← 新增
+    if error is not None:                                # ← 新增
+        return error                                     # ← 新增
+    ...  # 其余不动
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// 新芽：独立的、有测试的新逻辑
+export function canChangeEmail(isEmailConfirmed: boolean): string | null {
+  return isEmailConfirmed ? "Can't change a confirmed email" : null
+}
+
+test('a confirmed email cannot be changed', () =&gt; {
+  expect(canChangeEmail(true)).toBe("Can't change a confirmed email")
+})
+
+// 遗留方法里只加这两行
+async changeEmail(userId: number, newEmail: string): Promise&lt;string&gt; {
+  const data = await Database.getUserById(userId)
+  const error = canChangeEmail(data[3] as boolean)       // ← 新增
+  if (error !== null) return error                       // ← 新增
+  /* 其余不动 */
+}
+</pre></div>
+</div>
+
+<p>
+  遗留方法还是那么糟，但<strong>没有变得更糟</strong>，而新规则有了自己的测试和自己的家。
+  攒够几个这样的新芽，你会发现「核心」已经悄悄长出来了，到时候再做第三步就轻松得多。
+</p>
+
+<h2 id="where">从哪里下手</h2>
+
+<p>
+  不要试图给整个遗留系统补测试 —— 那是把覆盖率当目标的另一种形式（第 1 章）。测试的价值取决于它保护的是什么，所以要挑地方：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="按改动频率和出错代价两个维度挑选下手的地方：经常改且出错代价高的代码最优先；很少改且出错代价低的代码不用管">
+  <path class="ln" d="M150 20 V240 H640" marker-start="url(#ar)" marker-end="url(#ar)"/>
+  <text class="sm" x="76" y="124" text-anchor="middle">出错的代价</text>
+  <text class="sm" x="76" y="142" text-anchor="middle">（业务重要性）</text>
+  <text class="sm" x="395" y="264" text-anchor="middle">改动的频率（看版本历史）&rarr;</text>
+
+  <rect class="bx" x="160" y="30" width="230" height="98" rx="10"/>
+  <text class="ttl" x="275" y="58" text-anchor="middle">重要，但很少动</text>
+  <text class="sm" x="275" y="80" text-anchor="middle">先不碰。等哪天要改它，</text>
+  <text class="sm" x="275" y="98" text-anchor="middle">改之前再钉住</text>
+
+  <rect class="bx-a" x="400" y="30" width="230" height="98" rx="10"/>
+  <text class="ttl on-a" x="515" y="58" text-anchor="middle">重要，而且经常改 &#9733;</text>
+  <text class="sm" x="515" y="80" text-anchor="middle">从这里开始：</text>
+  <text class="sm" x="515" y="98" text-anchor="middle">走完整的四步</text>
+
+  <rect class="bx-d" x="160" y="136" width="230" height="96" rx="10"/>
+  <text class="lbl" x="275" y="166" text-anchor="middle">不重要，也很少动</text>
+  <text class="sm" x="275" y="188" text-anchor="middle">别管它</text>
+
+  <rect class="bx" x="400" y="136" width="230" height="96" rx="10"/>
+  <text class="ttl" x="515" y="164" text-anchor="middle">不重要，但经常改</text>
+  <text class="sm" x="515" y="186" text-anchor="middle">加功能时用新芽 / 包装，</text>
+  <text class="sm" x="515" y="204" text-anchor="middle">别让它继续变糟</text>
+
+  <text class="sm" x="660" y="76">多数 Bug 和</text>
+  <text class="sm" x="660" y="94">多数工时</text>
+  <text class="sm" x="660" y="112">都花在这一格</text>
+</svg>
+<figcaption>图 12-8　把力气花在「又重要、又老在改」的地方</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#128161; 怎么找「经常改」的代码</div>
+  <p>
+    版本历史会告诉你。例如 <code>git log --since="1 year ago" --name-only --pretty=format: | sort | uniq -c | sort -rn | head -20</code>
+    能列出过去一年被修改次数最多的 20 个文件。再对照缺陷记录看哪些文件老出 Bug，两份名单的交集就是起点。
+  </p>
+</div>
+
+<p>最实用的触发时机是：<strong>当你正好要改某段遗留代码的时候。</strong>改之前先钉住，改的过程中抽出一点核心，改完比来时干净一点。日积月累，常改的地方会自然变好。</p>
+
+<h2 id="pitfalls">常见的坑</h2>
+
+<div class="tw">
+<table>
+  <tr><th>做法</th><th>为什么是坑</th><th>应该怎样</th></tr>
+  <tr><td>边重构边顺手修 Bug、加功能</td><td>测试红了分不清原因；出了问题没法干净地回退</td><td>一次只做一样，分开提交</td></tr>
+  <tr><td>为了能写单元测试，把所有依赖都 Mock 掉，包括数据库</td><td>得到一堆和实现绑死的脆弱测试（第 5、8 章），而且给了你虚假的安全感</td><td>钉行为时用真数据库；只替换不受管依赖</td></tr>
+  <tr><td>把特征测试当成最终成果留着</td><td>慢、脆、不表达业务含义，长期是负资产</td><td>单元测试就位后删掉，只留一个集成测试</td></tr>
+  <tr><td>先定一个覆盖率目标再开工</td><td>大家会去挑最容易刷数字的代码，而不是最需要保护的</td><td>按图 12-8 挑地方</td></tr>
+  <tr><td>开缝时顺便「整理一下」周围的代码</td><td>开缝阶段的保护最弱，改动越多风险越大</td><td>开缝只做最小改动，整理留到有测试之后</td></tr>
+  <tr><td>一上来就想重写</td><td>遗留代码里沉淀了多年的边界情况处理，重写会把它们全丢掉</td><td>钉住、抽取、逐步替换</td></tr>
+</table>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>遗留代码 = 没有测试的代码。它的困境是：改代码需要测试，写测试又需要改代码。</li>
+  <li>打破困境靠两样东西：<strong>不用改代码就能写的特征测试</strong>，和<strong>小到几乎不会出错的接缝</strong>。</li>
+  <li><strong>特征测试</strong>记录的是代码「现在做什么」，期望值来自实际运行结果。它是脚手架：粗、慢都没关系，只求防止回归。</li>
+  <li>钉的时候发现 Bug，照原样钉住，另开工单。<strong>重构和改行为一次只做一样。</strong></li>
+  <li><strong>接缝</strong>只开在不受管依赖上；受管依赖（自己的数据库）在特征测试里直接用真的。</li>
+  <li>有了安全网之后，把决策逻辑抽成没有协作者的代码（最稳妥的是纯函数），为它写基于输出的单元测试，再朝第 7 章的领域模型演进。</li>
+  <li>单元测试就位后<strong>拆掉脚手架</strong>：删掉大部分特征测试，把最长的成功路径改写成一个集成测试。</li>
+  <li>没条件重构时，用<strong>新芽</strong>和<strong>包装</strong>加功能：新代码有测试，旧代码不变糟。</li>
+  <li>不要追求给整个系统补测试。从「又重要、又经常改」的地方开始，在每次要改它的时候顺手做。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>写特征测试时，你发现某种输入下系统算出的折扣明显是错的。这个测试的断言该写正确的值还是错误的值？</summary>
+  <p>写系统现在实际给出的（错误的）值，并加注释、开工单。特征测试回答的是「行为变没变」而不是「对不对」。等重构完成、有了好的测试之后，再作为一次单独的行为变更去修它。</p>
+</details>
+<details class="quiz">
+  <summary>同事建议：「数据库太慢了，特征测试里把 <code>Database</code> 也 Mock 掉吧。」你怎么看？</summary>
+  <p>不建议。自己的数据库是受管依赖，Mock 它会让测试和「调了哪些查询、调了几次」这种实现细节绑死，而重构恰恰会改变这些 —— 测试会在你没弄坏任何东西时变红。特征测试慢是可以接受的，它们是临时的。</p>
+</details>
+<details class="quiz">
+  <summary>第三步做完后，特征测试和新的单元测试都是绿的。为什么还要费事删掉特征测试？</summary>
+  <p>因为它们现在的净价值是负的：同样的逻辑已经被更快、更稳定的单元测试覆盖，而它们继续拖慢测试集、继续在表结构变化时误报。测试也是代码，是负债（第 1 章）。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>以配套示例为终点、本章「起点」那段代码为起点，亲手走一遍四步。可以直接用 <code>examples/</code> 里的数据库和迁移脚本。</li>
+    <li>在你的项目里跑一下图 12-8 下面那条 <code>git log</code> 命令，找出改动最频繁的五个文件。它们有测试吗？</li>
+    <li>挑其中一个你下周正好要改的方法，改之前先给它写两三个特征测试。记录一下：有没有发现让你意外的行为？</li>
+    <li>下次要往一个长方法里加逻辑时，试一次「新芽」：把新逻辑写成独立的函数并先写测试，再回去插一行调用。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

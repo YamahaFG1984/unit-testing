@@ -5,6 +5,7 @@
   'use strict';
 
   var CHAPTERS = [
+    { n: 0,  t: '把第一个测试跑起来',     d: '环境、项目结构、运行、覆盖率与 CI', part: '准备' },
     { n: 1,  t: '单元测试的目标',         d: '为什么要写测试，以及覆盖率为什么骗人', part: '第一部分 · 全局视角' },
     { n: 2,  t: '什么是单元测试',         d: '「隔离」的两种理解：经典学派与伦敦学派' },
     { n: 3,  t: '单元测试的结构',         d: 'AAA 模式、命名、夹具复用与参数化' },
@@ -15,10 +16,13 @@
     { n: 8,  t: '为什么需要集成测试',     d: '受管与不受管依赖、接口、日志', part: '第三部分 · 集成测试' },
     { n: 9,  t: 'Mock 最佳实践',          d: '在系统边缘验证，用 Spy 代替 Mock' },
     { n: 10, t: '测试数据库',             d: '迁移、事务、测试数据生命周期' },
-    { n: 11, t: '单元测试反模式',         d: '私有方法、代码污染、时间等常见陷阱', part: '第四部分 · 反模式' }
+    { n: 11, t: '单元测试反模式',         d: '私有方法、代码污染、时间等常见陷阱', part: '第四部分 · 反模式' },
+    { n: 12, t: '给遗留代码补测试',       d: '特征测试、接缝，一步步拆进四象限', part: '补充 · 原书之外' }
   ];
 
-  var cur = parseInt(document.body.dataset.chapter || '0', 10);
+  // 章节页是数字（0 起），首页是 "home"
+  var cur = parseInt(document.body.dataset.chapter, 10);
+  var idx = CHAPTERS.findIndex(function (c) { return c.n === cur; });
 
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
   function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -157,18 +161,19 @@
   }
 
   var LABEL = { java: 'Java', python: 'Python', py: 'Python', ts: 'TypeScript', csharp: 'C#',
-                sql: 'SQL', bash: 'Shell', text: '', pseudo: '伪代码' };
+                sql: 'SQL', bash: 'Shell', yaml: 'YAML', xml: 'XML', text: '', pseudo: '伪代码' };
   var NOTE = { java: 'JUnit 5 · AssertJ · Mockito', python: 'pytest · unittest.mock', ts: 'Vitest' };
 
   document.querySelectorAll('.code').forEach(function (box) {
     var pre = box.querySelector('pre');
     if (!pre) return;
     var lang = box.dataset.lang || '';
+    var hl = box.dataset.hl || lang;   // 标签页按 lang 分组，高亮可以另指定（如命令行）
     var file = box.dataset.file || '';
     var inTabs = box.parentNode.classList.contains('tabs');
     var bar = document.createElement('div');
     bar.className = 'bar';
-    var tag = file || (inTabs ? (NOTE[lang] || lang) : (LABEL[lang] !== undefined ? LABEL[lang] : lang)) || 'code';
+    var tag = file || (inTabs ? (box.dataset.hl ? '命令行' : (NOTE[lang] || lang)) : (LABEL[lang] !== undefined ? LABEL[lang] : lang)) || 'code';
     bar.innerHTML = '<span class="tag">' + esc(tag) + '</span>';
     var cp = document.createElement('button');
     cp.className = 'copy'; cp.type = 'button'; cp.textContent = '复制';
@@ -181,13 +186,13 @@
     box.insertBefore(bar, pre);
 
     var code = pre.textContent.replace(/^\n/, '').replace(/\s+$/, '');
-    if (lang === 'python' || lang === 'py') {
+    if (hl === 'python' || hl === 'py') {
       pre.innerHTML = paint(code, RE_PY, CL_C);
-    } else if (lang === 'bash' || lang === 'sh' || lang === 'shell') {
+    } else if (hl === 'bash' || hl === 'sh' || hl === 'shell' || hl === 'yaml') {
       pre.innerHTML = paint(code, RE_SH, ['tk-cm', 'tk-st', 'tk-kw']);
-    } else if (lang === 'sql') {
+    } else if (hl === 'sql') {
       pre.innerHTML = paint(code, RE_SQL, ['tk-cm', 'tk-st', 'tk-kw']);
-    } else if (lang === 'text') {
+    } else if (hl === 'text') {
       pre.innerHTML = esc(code);
     } else {
       pre.innerHTML = paint(code, RE_C, CL_C);
@@ -240,9 +245,9 @@
 
   /* ---------- 上一章 / 下一章 ---------- */
   var pager = document.getElementById('pager');
-  if (pager && cur) {
-    var prev = CHAPTERS.find(function (c) { return c.n === cur - 1; });
-    var next = CHAPTERS.find(function (c) { return c.n === cur + 1; });
+  if (pager && idx >= 0) {
+    var prev = CHAPTERS[idx - 1];
+    var next = CHAPTERS[idx + 1];
     var h = '';
     h += prev ? '<a class="prev" href="ch' + pad(prev.n) + '.html"><span>&larr; 上一章</span>第 ' + prev.n + ' 章 · ' + prev.t + '</a>'
               : '<a class="prev" href="index.html"><span>&larr; 返回</span>课程首页</a>';

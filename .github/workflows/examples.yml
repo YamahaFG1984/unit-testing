@@ -1,0 +1,72 @@
+name: examples
+
+on:
+  push:
+    paths: ['examples/**', '.github/workflows/examples.yml']
+  pull_request:
+    paths: ['examples/**']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [python, java, ts]
+
+    # 受管依赖用真的：给每次构建起一个 PostgreSQL
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: crm
+          POSTGRES_PASSWORD: crm
+          POSTGRES_DB: crm
+        ports: ['54329:5432']
+        options: >-
+          --health-cmd "pg_isready -U crm -d crm"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 应用数据库迁移
+        env:
+          PGPASSWORD: crm
+        run: |
+          for f in examples/db/migrations/*.sql; do
+            psql -h localhost -p 54329 -U crm -d crm -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      # ---------- Python ----------
+      - if: matrix.lang == 'python'
+        uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - if: matrix.lang == 'python'
+        working-directory: examples/python
+        run: |
+          pip install -e '.[dev]'
+          pytest tests/unit          # 先跑快的
+          pytest tests/integration   # 再跑慢的
+
+      # ---------- Java ----------
+      - if: matrix.lang == 'java'
+        uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21', cache: maven }
+      - if: matrix.lang == 'java'
+        working-directory: examples/java
+        run: |
+          mvn -B test
+          mvn -B test -Pintegration
+
+      # ---------- TypeScript ----------
+      - if: matrix.lang == 'ts'
+        uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - if: matrix.lang == 'ts'
+        working-directory: examples/ts
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run test:integration

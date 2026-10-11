@@ -7,13 +7,13 @@
 <title>单元测试图解教程 · 原则、实践与模式</title>
 <link rel="stylesheet" href="assets/style.css">
 </head>
-<body data-chapter="0">
+<body data-chapter="home">
 <div id="app">
 <aside id="sidebar"></aside>
 <main>
 
 <div class="hero">
-  <span class="chapter-eyebrow">面向初学者的 11 章图解教程</span>
+  <span class="chapter-eyebrow">面向初学者的图解教程 · 11 章正文 + 2 章补充</span>
   <h1>单元测试：原则、实践与模式</h1>
   <p class="sub">
     这套教程整理自 Vladimir Khorikov 的《Unit Testing: Principles, Practices, and Patterns》（Manning, 2020）。
@@ -24,7 +24,8 @@
     <span class="pill">Java · JUnit 5 · AssertJ · Mockito</span>
     <span class="pill">Python · pytest · unittest.mock</span>
     <span class="pill">TypeScript · Vitest</span>
-    <span class="pill">100 张图</span>
+    <span class="pill">110+ 张图</span>
+    <span class="pill">可运行的配套示例</span>
   </p>
 </div>
 
@@ -128,12 +129,19 @@
 <figcaption>图 0-2　四个部分、十一章。第 4 章是枢纽，后面每一章都在用它</figcaption>
 </figure>
 
+<p>
+  在原书的十一章之外，教程补了两章：<a href="ch00.html">第 0 章</a>讲怎么把环境搭起来、把测试跑起来；
+  <a href="ch12.html">第 12 章</a>讲读完全书后最常遇到的问题 —— 面对一堆没有测试的现成代码，从哪里开始。
+</p>
+
 <h2 id="how">怎么用这套教程</h2>
 
 <ul>
+  <li><strong>没写过测试？先读<a href="ch00.html">第 0 章</a>。</strong>它带你装好环境、跑通第一个测试。已经会了就从第 1 章开始。</li>
   <li><strong>按顺序读。</strong>这本书是一步步推导出来的，后面的结论依赖前面的定义。尤其不要跳过第 4 章和第 5 章。</li>
   <li><strong>代码块可以切换语言。</strong>带标签的代码块有 Java / Python / TypeScript 三个版本，点一下标签，全站都会切换并记住你的选择。三个版本表达的是同一件事，只是写法各自遵循该语言的习惯。</li>
   <li><strong>每章末尾有自测和练习。</strong>自测题点开就能看答案；练习建议真的动手 —— 看懂和写出来之间的差距，比想象的大。</li>
+  <li><strong>有可以直接运行的配套示例。</strong>第 7–10 章的 CRM 在仓库的 <a href="https://github.com/YamahaFG1984/unit-testing/tree/main/examples"><code>examples/</code></a> 目录里有三种语言的完整实现，带对真实 PostgreSQL 的集成测试。</li>
   <li><strong>想对照原书代码？</strong>每段示例下面都标了对应的原书 Listing 编号和仓库里 <code>code/Book/ChapterN/</code> 下的 C# 文件。</li>
 </ul>
 
@@ -205,7 +213,7 @@ test('delivery with a past date is invalid', () =&gt; {
   <div class="t">&#128161; 如果只记住一件事</div>
   <p>
     写完一个测试，问自己：<strong>「如果我重构这段代码但不改变它的行为，这个测试会红吗？」</strong>
-    会的话，它测的是实现而不是行为。这套教程剩下的全部内容，都是在解释怎样让答案变成「不会」，同时还能抓住真正的 Bug。
+    会的话，它测的是实现而不是行为。这套教程的全部内容，都是在解释怎样让答案变成「不会」，同时还能抓住真正的 Bug。
   </p>
 </div>
 

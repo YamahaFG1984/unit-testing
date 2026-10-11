@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 0 章 · 把第一个测试跑起来 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="0">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 0 章 · 准备</span>
+<h1>把第一个测试跑起来</h1>
+<p class="lede">
+  原书默认你已经会搭环境、会运行测试。如果你还没有，这一章先把这道坎迈过去：
+  装什么、文件放哪、怎么跑、怎么看懂失败信息和覆盖率报告，以及怎么让它在每次提交时自动跑。
+  已经熟悉这些的话，可以直接跳到<a href="ch01.html">第 1 章</a>。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>知道测试框架在背后替你做了哪三件事</li>
+    <li>在你选的语言里从零写出并运行第一个测试</li>
+    <li>看懂一条失败信息</li>
+    <li>把教程的<strong>配套示例</strong>跑起来（含需要真数据库的集成测试）</li>
+    <li>生成覆盖率报告，并且不被它误导</li>
+    <li>把测试接进 CI，让它每次提交都跑</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<div class="box note">
+  <div class="t">&#9432; 这一章不是原书内容</div>
+  <p>
+    本章和<a href="ch12.html">第 12 章</a>是这套教程补充的。本章出现的命令都在教程仓库的
+    <a href="https://github.com/YamahaFG1984/unit-testing/tree/main/examples"><code>examples/</code></a> 目录里实际运行过。
+  </p>
+</div>
+
+<h2 id="what">测试框架替你做了什么</h2>
+
+<p>
+  「测试」本质上只是一段普通代码：调用你的函数，检查结果对不对，不对就报错。
+  你完全可以手写一个 <code>main</code> 函数来做这件事。测试框架只是把三件重复的事接了过去：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="测试框架做三件事：发现测试、逐个运行并隔离、汇报结果">
+  <rect class="bx-b" x="14" y="20" width="228" height="150" rx="12"/>
+  <text class="ttl on-b" x="128" y="46" text-anchor="middle">① 发现</text>
+  <text class="lbl" x="128" y="72" text-anchor="middle">按约定找出哪些是测试</text>
+  <text class="sm" x="128" y="98" text-anchor="middle">Java：带 @Test 的方法</text>
+  <text class="sm" x="128" y="116" text-anchor="middle">Python：test_ 开头的函数</text>
+  <text class="sm" x="128" y="134" text-anchor="middle">TS：*.test.ts 里的 test(…)</text>
+
+  <rect class="bx-a" x="266" y="20" width="228" height="150" rx="12"/>
+  <text class="ttl on-a" x="380" y="46" text-anchor="middle">② 运行</text>
+  <text class="lbl" x="380" y="72" text-anchor="middle">一个一个地执行</text>
+  <text class="sm" x="380" y="98" text-anchor="middle">一个测试失败或抛异常，</text>
+  <text class="sm" x="380" y="116" text-anchor="middle">不影响其他测试继续跑</text>
+  <text class="sm" x="380" y="134" text-anchor="middle">断言失败 = 抛出一个特殊的异常</text>
+
+  <rect class="bx-g" x="518" y="20" width="228" height="150" rx="12"/>
+  <text class="ttl on-g" x="632" y="46" text-anchor="middle">③ 汇报</text>
+  <text class="lbl" x="632" y="72" text-anchor="middle">告诉你结果</text>
+  <text class="sm" x="632" y="98" text-anchor="middle">过了几个、挂了几个</text>
+  <text class="sm" x="632" y="116" text-anchor="middle">挂的那个：期望什么、实际什么</text>
+  <text class="sm" x="632" y="134" text-anchor="middle">退出码非 0 &rarr; CI 知道失败了</text>
+
+  <path class="ln" d="M244 95 H262" marker-end="url(#ar)"/>
+  <path class="ln" d="M496 95 H514" marker-end="url(#ar)"/>
+  <text class="sm" x="380" y="206" text-anchor="middle">剩下的 —— 测什么、怎么断言 —— 都是你自己的事，也是这套教程后面 12 章的内容</text>
+</svg>
+<figcaption>图 0-A　测试框架的全部工作：发现、运行、汇报</figcaption>
+</figure>
+
+<h2 id="tools">每种语言需要装什么</h2>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>Java</th><th>Python</th><th>TypeScript</th></tr>
+  <tr><td><strong>运行时</strong></td><td>JDK 21</td><td>Python 3.10+</td><td>Node.js 20+</td></tr>
+  <tr><td><strong>构建 / 包管理</strong></td><td>Maven（或 Gradle）</td><td>pip + 虚拟环境</td><td>npm</td></tr>
+  <tr><td><strong>测试框架</strong></td><td>JUnit 5</td><td>pytest</td><td>Vitest</td></tr>
+  <tr><td><strong>断言</strong></td><td>AssertJ</td><td>原生 <code>assert</code></td><td>内置 <code>expect</code></td></tr>
+  <tr><td><strong>Mock</strong></td><td>Mockito</td><td>标准库 <code>unittest.mock</code></td><td>内置 <code>vi</code></td></tr>
+  <tr><td><strong>覆盖率</strong></td><td>JaCoCo</td><td>pytest-cov</td><td><code>@vitest/coverage-v8</code></td></tr>
+  <tr><td><strong>描述项目的文件</strong></td><td><code>pom.xml</code></td><td><code>pyproject.toml</code></td><td><code>package.json</code></td></tr>
+</table>
+</div>
+
+<p>集成测试还需要 <strong>Docker</strong>，用来在本机起一个 PostgreSQL。只想先跑单元测试的话可以暂时不装。</p>
+
+<h2 id="layout">测试文件放在哪</h2>
+
+<p>
+  三种语言的惯例不同，但思路一样：<strong>生产代码和测试代码分开放</strong>，测试代码不会被打包发布（这也呼应第 11 章的「代码污染」）。
+  下面是配套示例的目录结构：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-hl="text"><pre>
+examples/java/
+├── pom.xml                              项目描述：依赖、插件
+└── src/
+    ├── main/java/crm/                   生产代码
+    │   ├── domain/                        领域模型：User、Company、领域事件……
+    │   ├── application/                   控制器、EventDispatcher、MessageBus……
+    │   └── persistence/                   事务与仓储
+    └── test/java/crm/                   测试代码（包结构与 main 对应）
+        ├── domain/                        单元测试：UserTests、CompanyTests
+        └── application/                   集成测试：UserControllerTests（带 @Tag("integration")）
+</pre></div>
+<div class="code" data-lang="python" data-hl="text"><pre>
+examples/python/
+├── pyproject.toml                       项目描述：依赖、pytest 配置
+├── src/crm/                             生产代码
+│   ├── domain.py                          领域模型：User、Company、领域事件……
+│   ├── application.py                     控制器、EventDispatcher、MessageBus……
+│   └── persistence.py                     事务与仓储
+└── tests/                               测试代码
+    ├── unit/                              单元测试：test_user.py、test_company.py
+    └── integration/                       集成测试：test_user_controller.py
+        ├── conftest.py                      pytest 自动加载：每个测试开始时清库
+        └── helpers.py                       造数据、执行、断言的辅助代码
+</pre></div>
+<div class="code" data-lang="ts" data-hl="text"><pre>
+examples/ts/
+├── package.json                         项目描述：依赖、npm 脚本
+├── tsconfig.json                        TypeScript 编译选项
+├── vitest.config.ts                     两组测试：unit（可并行）、integration（顺序）
+├── src/                                 生产代码
+│   ├── domain.ts                          领域模型：User、Company、领域事件……
+│   ├── application.ts                     控制器、EventDispatcher、MessageBus……
+│   └── persistence.ts                     事务与仓储
+└── tests/                               测试代码
+    ├── unit/                              单元测试：user.test.ts、company.test.ts
+    └── integration/                       集成测试：user-controller.test.ts、helpers.ts
+</pre></div>
+</div>
+
+<div class="box tip">
+  <div class="t">&#128161; 从第一天起就把单元测试和集成测试分开</div>
+  <p>
+    单元测试要快到你愿意每改一行就跑一次；集成测试慢、还需要数据库。把它们放在不同目录（或打上不同标签），
+    就能<strong>分别运行</strong>：写代码时反复跑单元测试，提交前再跑一遍集成测试。第 8 章会解释这背后的道理。
+  </p>
+</div>
+
+<h2 id="first">从零写第一个测试</h2>
+
+<p>找一个空目录，跟着做。目标是测一个最简单的东西：判断一个邮箱是不是公司邮箱。</p>
+
+<h3>第 1 步：建项目、装依赖</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-hl="bash"><pre>
+mkdir hello-tests && cd hello-tests
+mkdir -p src/main/java/hello src/test/java/hello
+
+# Java 需要一个 pom.xml。最省事的办法是把配套示例里的复制过来再删减：
+#   examples/java/pom.xml
+# 其中和测试有关的就是 junit-jupiter、assertj-core、mockito-core 这三个依赖，
+# 以及 maven-surefire-plugin（负责运行测试）。
+</pre></div>
+<div class="code" data-lang="python" data-hl="bash"><pre>
+mkdir hello-tests && cd hello-tests
+
+python3 -m venv .venv            # 建一个只属于这个项目的虚拟环境
+source .venv/bin/activate        # Windows 上是 .venv\Scripts\activate
+pip install pytest
+</pre></div>
+<div class="code" data-lang="ts" data-hl="bash"><pre>
+mkdir hello-tests && cd hello-tests
+
+npm init -y
+npm install --save-dev vitest typescript
+</pre></div>
+</div>
+
+<h3>第 2 步：写被测代码</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="src/main/java/hello/Company.java"><pre>
+package hello;
+
+public class Company {
+    private final String domainName;
+
+    public Company(String domainName) {
+        this.domainName = domainName;
+    }
+
+    public boolean isEmailCorporate(String email) {
+        String emailDomain = email.split("@")[1];
+        return emailDomain.equals(domainName);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="company.py"><pre>
+class Company:
+    def __init__(self, domain_name: str) -&gt; None:
+        self.domain_name = domain_name
+
+    def is_email_corporate(self, email: str) -&gt; bool:
+        email_domain = email.split("@")[1]
+        return email_domain == self.domain_name
+</pre></div>
+<div class="code" data-lang="ts" data-file="company.ts"><pre>
+export class Company {
+  constructor(readonly domainName: string) {}
+
+  isEmailCorporate(email: string): boolean {
+    const emailDomain = email.split('@')[1]
+    return emailDomain === this.domainName
+  }
+}
+</pre></div>
+</div>
+
+<h3>第 3 步：写测试</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="src/test/java/hello/CompanyTests.java"><pre>
+package hello;
+
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class CompanyTests {
+    @Test
+    void an_email_on_the_company_domain_is_corporate() {
+        var sut = new Company("mycorp.com");
+
+        boolean result = sut.isEmailCorporate("alice@mycorp.com");
+
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    void an_email_on_another_domain_is_not_corporate() {
+        var sut = new Company("mycorp.com");
+
+        boolean result = sut.isEmailCorporate("alice@gmail.com");
+
+        assertThat(result).isFalse();
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="test_company.py"><pre>
+from company import Company
+
+
+def test_an_email_on_the_company_domain_is_corporate():
+    sut = Company("mycorp.com")
+
+    result = sut.is_email_corporate("alice@mycorp.com")
+
+    assert result is True
+
+
+def test_an_email_on_another_domain_is_not_corporate():
+    sut = Company("mycorp.com")
+
+    result = sut.is_email_corporate("alice@gmail.com")
+
+    assert result is False
+</pre></div>
+<div class="code" data-lang="ts" data-file="company.test.ts"><pre>
+import { expect, test } from 'vitest'
+import { Company } from './company'
+
+test('an email on the company domain is corporate', () =&gt; {
+  const sut = new Company('mycorp.com')
+
+  const result = sut.isEmailCorporate('alice@mycorp.com')
+
+  expect(result).toBe(true)
+})
+
+test('an email on another domain is not corporate', () =&gt; {
+  const sut = new Company('mycorp.com')
+
+  const result = sut.isEmailCorporate('alice@gmail.com')
+
+  expect(result).toBe(false)
+})
+</pre></div>
+</div>
+
+<p>
+  先别管为什么变量叫 <code>sut</code>、为什么中间空两行、为什么测试名是一句话 —— 这些是<a href="ch03.html">第 3 章</a>的内容。现在只要它能跑。
+</p>
+
+<h3>第 4 步：运行</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-hl="bash"><pre>
+mvn test
+</pre></div>
+<div class="code" data-lang="python" data-hl="bash"><pre>
+pytest
+</pre></div>
+<div class="code" data-lang="ts" data-hl="bash"><pre>
+npx vitest run
+</pre></div>
+</div>
+
+<p>看到「2 passed」之类的字样，你就有了第一组通过的测试。</p>
+
+<h3>第 5 步：故意弄坏它，学会读失败信息</h3>
+
+<p>
+  <strong>一个从没见它失败过的测试，你没法确定它真的在检查东西。</strong>
+  把被测代码里的 <code>equals</code> / <code>==</code> / <code>===</code> 改成「不等于」，再跑一次。你会看到类似这样的输出：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="一条失败信息的四个组成部分：哪个测试失败、期望值、实际值、出错的位置">
+  <rect x="20" y="16" width="440" height="218" rx="10" style="fill:var(--code-bg);stroke:var(--line-2);stroke-width:1.5"/>
+  <text class="mono" x="36" y="44" style="fill:#f08076">FAILED</text>
+  <text class="mono" x="92" y="44" style="fill:#e9e2d8">an email on the company domain</text>
+  <text class="mono" x="92" y="62" style="fill:#e9e2d8">is corporate</text>
+  <text class="mono" x="36" y="100" style="fill:#b4d68a">Expected: true</text>
+  <text class="mono" x="36" y="122" style="fill:#f08076">Received: false</text>
+  <text class="mono" x="36" y="160" style="fill:#7f7568">at company.test.ts:9</text>
+  <text class="mono" x="36" y="182" style="fill:#7f7568">    expect(result).toBe(true)</text>
+  <text class="mono" x="36" y="214" style="fill:#e9e2d8">Tests  1 failed | 1 passed (2)</text>
+
+  <path class="ln-a" d="M464 50 H500" marker-start="url(#ar-a)"/>
+  <text class="lbl on-a" x="508" y="46">① 哪个测试</text>
+  <text class="sm" x="508" y="64">名字起得好，看这一行就知道</text>
+  <text class="sm" x="508" y="80">哪条业务规则被破坏了</text>
+
+  <path class="ln-a" d="M464 110 H500" marker-start="url(#ar-a)"/>
+  <text class="lbl on-a" x="508" y="106">② 期望 vs. 实际</text>
+  <text class="sm" x="508" y="124">最重要的两行</text>
+
+  <path class="ln-a" d="M464 170 H500" marker-start="url(#ar-a)"/>
+  <text class="lbl on-a" x="508" y="166">③ 位置</text>
+  <text class="sm" x="508" y="184">哪个文件、第几行的断言</text>
+
+  <path class="ln-a" d="M464 210 H500" marker-start="url(#ar-a)"/>
+  <text class="lbl on-a" x="508" y="214">④ 汇总</text>
+</svg>
+<figcaption>图 0-B　读失败信息的顺序：哪个测试 &rarr; 期望和实际差在哪 &rarr; 在哪一行。三种框架的排版不同，这四样东西都有</figcaption>
+</figure>
+
+<p>看完把代码改回去，确认测试重新变绿。这个「绿 &rarr; 红 &rarr; 绿」的小循环值得养成习惯。</p>
+
+<h2 id="examples">把配套示例跑起来</h2>
+
+<p>
+  教程第 7–10 章用一个 CRM 系统（「修改用户邮箱」）贯穿始终。仓库的
+  <a href="https://github.com/YamahaFG1984/unit-testing/tree/main/examples"><code>examples/</code></a>
+  目录里有它的三种语言实现，是这几章最终推导出来的样子。现在先把它跑起来，后面读到相应章节时可以对照着改。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="配套示例的结构：领域模型由十个单元测试覆盖，不需要任何外部依赖；控制器由一个集成测试覆盖，连接真实的 PostgreSQL，消息总线用 Spy 替换">
+  <rect class="bx-a" x="20" y="20" width="340" height="130" rx="12"/>
+  <text class="ttl on-a" x="36" y="46">领域模型 domain</text>
+  <text class="sm" x="36" y="66">User · Company · 领域事件 · 工厂</text>
+  <rect class="bx-g" x="36" y="82" width="308" height="52" rx="8"/>
+  <text class="lbl on-g" x="48" y="104">10 个单元测试</text>
+  <text class="sm" x="48" y="122">不需要数据库，不用 Mock，几十毫秒跑完</text>
+
+  <rect class="bx-b" x="400" y="20" width="340" height="130" rx="12"/>
+  <text class="ttl on-b" x="416" y="46">应用服务 application + 持久化 persistence</text>
+  <text class="sm" x="416" y="66">UserController · EventDispatcher · 仓储 · 事务</text>
+  <rect class="bx-g" x="416" y="82" width="308" height="52" rx="8"/>
+  <text class="lbl on-g" x="428" y="104">1 个集成测试</text>
+  <text class="sm" x="428" y="122">走最长的那条成功路径</text>
+
+  <path class="ln-g" d="M500 152 V186" marker-end="url(#ar-g)"/>
+  <path class="ln" d="M640 152 V186" marker-end="url(#ar)" style="stroke-dasharray:5 4"/>
+  <rect class="bx-g" x="400" y="190" width="170" height="60" rx="10"/>
+  <text class="lbl on-g" x="485" y="214" text-anchor="middle">PostgreSQL（Docker）</text>
+  <text class="sm" x="485" y="234" text-anchor="middle">受管依赖 &rarr; 用真的</text>
+  <rect class="bx-d" x="582" y="190" width="158" height="60" rx="10"/>
+  <text class="lbl" x="661" y="214" text-anchor="middle">消息总线</text>
+  <text class="sm" x="661" y="234" text-anchor="middle">不受管依赖 &rarr; BusSpy</text>
+
+  <text class="sm" x="190" y="186" text-anchor="middle">10 : 1 —— 这就是第 4、8 章说的</text>
+  <text class="sm" x="190" y="204" text-anchor="middle">「测试金字塔」在一个小项目里的样子</text>
+</svg>
+<figcaption>图 0-C　配套示例的测试布局。现在看不懂没关系，读完第 8 章再回来看</figcaption>
+</figure>
+
+<h3>单元测试（不需要数据库）</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-hl="bash"><pre>
+git clone https://github.com/YamahaFG1984/unit-testing.git
+cd unit-testing/examples/java
+
+mvn test                         # 默认只跑单元测试
+</pre></div>
+<div class="code" data-lang="python" data-hl="bash"><pre>
+git clone https://github.com/YamahaFG1984/unit-testing.git
+cd unit-testing/examples/python
+
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'    # 安装项目本身和测试用的依赖
+
+.venv/bin/pytest tests/unit
+</pre></div>
+<div class="code" data-lang="ts" data-hl="bash"><pre>
+git clone https://github.com/YamahaFG1984/unit-testing.git
+cd unit-testing/examples/ts
+
+npm install
+
+npm test                         # 只跑单元测试
+</pre></div>
+</div>
+
+<h3>集成测试（需要 Docker）</h3>
+
+<p>先在 <code>examples/</code> 目录下起数据库。它只监听本机的 <code>54329</code> 端口，第一次启动时会自动执行 <code>db/migrations/</code> 里的建表脚本：</p>
+
+<div class="code" data-lang="bash"><pre>
+cd unit-testing/examples
+docker compose up -d --wait      # 启动并等到数据库就绪
+</pre></div>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-hl="bash"><pre>
+cd java
+mvn test -Pintegration           # 单元测试 + 集成测试一起跑
+</pre></div>
+<div class="code" data-lang="python" data-hl="bash"><pre>
+cd python
+.venv/bin/pytest tests/integration
+</pre></div>
+<div class="code" data-lang="ts" data-hl="bash"><pre>
+cd ts
+npm run test:integration
+</pre></div>
+</div>
+
+<p>用完后 <code>docker compose down -v</code> 可以把容器连同数据一起删掉。</p>
+
+<h3>日常最常用的几条命令</h3>
+
+<div class="tw">
+<table>
+  <tr><th>想做什么</th><th>Java（Maven）</th><th>Python（pytest）</th><th>TypeScript（Vitest）</th></tr>
+  <tr><td>只跑一个测试文件 / 类</td><td><code>mvn test -Dtest=UserTests</code></td><td><code>pytest tests/unit/test_user.py</code></td><td><code>npx vitest run tests/unit/user.test.ts</code></td></tr>
+  <tr><td>只跑名字匹配的测试</td><td><code>mvn test -Dtest='UserTests#changing*'</code></td><td><code>pytest -k corporate</code></td><td><code>npx vitest run -t corporate</code></td></tr>
+  <tr><td>改代码时自动重跑</td><td>用 IDE 的测试面板</td><td>装 <code>pytest-watch</code> 后 <code>ptw</code></td><td><code>npm run test:watch</code></td></tr>
+  <tr><td>遇到第一个失败就停</td><td><code>mvn test -Dsurefire.skipAfterFailureCount=1</code></td><td><code>pytest -x</code></td><td><code>npx vitest run --bail 1</code></td></tr>
+</table>
+</div>
+
+<h2 id="coverage">生成覆盖率报告</h2>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-hl="bash"><pre>
+mvn test
+# 报告：target/site/jacoco/index.html（用浏览器打开）
+</pre></div>
+<div class="code" data-lang="python" data-hl="bash"><pre>
+.venv/bin/pytest tests/unit --cov=crm --cov-branch
+# 想要可以点进去看每一行的 HTML 报告，再加 --cov-report=html
+</pre></div>
+<div class="code" data-lang="ts" data-hl="bash"><pre>
+npm run coverage
+# 想要 HTML 报告：npx vitest run --project unit --coverage --coverage.reporter=html
+</pre></div>
+</div>
+
+<p>只跑单元测试时，Python 版的输出是这样的（另外两种语言的数字相近）：</p>
+
+<div class="code" data-lang="text"><pre>
+Name                     Stmts   Miss Branch BrPart  Cover
+----------------------------------------------------------
+src/crm/application.py      47     47      8      0     0%
+src/crm/domain.py           64      2      8      0    97%
+src/crm/persistence.py      37     37      6      0     0%
+----------------------------------------------------------
+TOTAL                      148     86     22      0    41%
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="覆盖率报告的正确读法：总数百分之四十一并不说明问题。领域模型百分之九十七说明重点测到了；应用层和持久化层为零是因为它们由集成测试负责">
+  <rect class="bx-r" x="14" y="16" width="236" height="178" rx="12"/>
+  <text class="ttl on-r" x="28" y="42">&#10007; 只看总数</text>
+  <text class="mono" x="28" y="76" style="font-size:22px">41%</text>
+  <text class="sm" x="28" y="106">「太低了，必须提到 80%！」</text>
+  <text class="sm" x="28" y="134">然后去给控制器写一堆全是 Mock</text>
+  <text class="sm" x="28" y="152">的「单元测试」凑数 ——</text>
+  <text class="sm" x="28" y="170">正是这套教程反对的做法</text>
+
+  <rect class="bx-g" x="262" y="16" width="484" height="178" rx="12"/>
+  <text class="ttl on-g" x="276" y="42">&#10003; 分开看每一部分</text>
+  <rect class="bx" x="276" y="56" width="456" height="38" rx="6"/>
+  <text class="mono sm" x="288" y="80">domain  97%</text>
+  <text class="sm" x="400" y="80">核心业务逻辑几乎全被单元测试覆盖 —— 这才是重点</text>
+  <rect class="bx" x="276" y="100" width="456" height="38" rx="6"/>
+  <text class="mono sm" x="288" y="124">application / persistence  0%</text>
+  <text class="sm" x="510" y="124">不是漏了：归集成测试管</text>
+  <text class="sm" x="276" y="162">没覆盖到的那 2 行在哪？打开 HTML 报告点进去看。它们如果是重要逻辑，</text>
+  <text class="sm" x="276" y="180">就补一个验证行为的测试；如果无关紧要，就放着</text>
+</svg>
+<figcaption>图 0-D　同一份报告的两种读法</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 覆盖率是指示器，不是目标</div>
+  <p>
+    这是<a href="ch01.html">第 1 章</a>的核心论点之一：覆盖率很低能说明测试不够，覆盖率很高却什么都说明不了。
+    用它来<strong>找没测到的重要代码</strong>，不要拿它当 KPI。
+  </p>
+</div>
+
+<h2 id="ci">接进 CI：让测试每次提交都跑</h2>
+
+<p>
+  第 1 章说成功的测试集第一个特征是「融入开发流程」。最低限度的做法是：<strong>每次推送代码，由一台干净的机器把所有测试跑一遍</strong>。
+  这样「在我电脑上是好的」就不再是理由了。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 190" role="img" aria-label="CI 流水线：推送代码后，依次安装依赖、跑单元测试、起数据库并跑集成测试，全部通过才允许合并，任何一步失败都立即停止并通知">
+  <rect class="bx" x="14" y="50" width="110" height="60" rx="10"/><text class="lbl" x="69" y="76" text-anchor="middle">git push</text><text class="sm" x="69" y="96" text-anchor="middle">或开 PR</text>
+  <rect class="bx" x="150" y="50" width="120" height="60" rx="10"/><text class="lbl" x="210" y="76" text-anchor="middle">装依赖</text><text class="sm" x="210" y="96" text-anchor="middle">干净的环境</text>
+  <rect class="bx-g" x="296" y="50" width="130" height="60" rx="10"/><text class="lbl on-g" x="361" y="76" text-anchor="middle">单元测试</text><text class="sm" x="361" y="96" text-anchor="middle">快，先跑</text>
+  <rect class="bx-b" x="452" y="50" width="150" height="60" rx="10"/><text class="lbl on-b" x="527" y="76" text-anchor="middle">集成测试</text><text class="sm" x="527" y="96" text-anchor="middle">起数据库，后跑</text>
+  <rect class="bx-g" x="628" y="50" width="118" height="60" rx="10"/><text class="lbl on-g" x="687" y="76" text-anchor="middle">&#10003; 可以合并</text><text class="sm" x="687" y="96" text-anchor="middle">全绿才放行</text>
+  <path class="ln" d="M126 80 H146" marker-end="url(#ar)"/>
+  <path class="ln" d="M272 80 H292" marker-end="url(#ar)"/>
+  <path class="ln" d="M428 80 H448" marker-end="url(#ar)"/>
+  <path class="ln" d="M604 80 H624" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M361 112 V140 H527 V112" style="stroke-dasharray:5 4"/>
+  <path class="ln-r" d="M444 140 V156" marker-end="url(#ar-r)"/>
+  <text class="sm on-r" x="444" y="176" text-anchor="middle">任何一步失败：立刻停止，标红，通知提交的人</text>
+  <text class="sm" x="380" y="26" text-anchor="middle">快的测试放前面 —— 大多数问题在最便宜的那一步就被拦住</text>
+</svg>
+<figcaption>图 0-E　一条最小的 CI 流水线</figcaption>
+</figure>
+
+<p>下面是教程仓库实际在用的 GitHub Actions 配置（节选了 Python 部分；完整文件在 <code>.github/workflows/examples.yml</code>）：</p>
+
+<div class="code" data-lang="yaml" data-file=".github/workflows/examples.yml"><pre>
+name: examples
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # 受管依赖用真的：给每次构建起一个 PostgreSQL
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: crm, POSTGRES_PASSWORD: crm, POSTGRES_DB: crm }
+        ports: ['54329:5432']
+        options: --health-cmd "pg_isready -U crm -d crm" --health-interval 2s --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 应用数据库迁移
+        env: { PGPASSWORD: crm }
+        run: |
+          for f in examples/db/migrations/*.sql; do
+            psql -h localhost -p 54329 -U crm -d crm -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+
+      - working-directory: examples/python
+        run: |
+          pip install -e '.[dev]'
+          pytest tests/unit          # 先跑快的
+          pytest tests/integration   # 再跑慢的
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#128161; 三条够用很久的 CI 规矩</div>
+  <ul>
+    <li><strong>红了就先修</strong>，不要在红的基础上继续提交。第 4 章会讲「狼来了」效应：大家一旦习惯了红，测试就废了。</li>
+    <li><strong>不要用「重跑一次就好了」对付偶发失败。</strong>偶发失败说明测试之间有共享状态或依赖了时间，去找原因（第 2、11 章）。</li>
+    <li><strong>不要设覆盖率门槛。</strong>理由见上一节。</li>
+  </ul>
+</div>
+
+<h2 id="troubleshoot">常见问题</h2>
+
+<div class="tw">
+<table>
+  <tr><th>现象</th><th>多半是因为</th></tr>
+  <tr><td>框架说「没有找到测试」</td><td>命名不符合约定。Python：文件要叫 <code>test_*.py</code>、函数要以 <code>test_</code> 开头；TS：文件要叫 <code>*.test.ts</code>；Java：类要在 <code>src/test/java</code> 下，方法要有 <code>@Test</code></td></tr>
+  <tr><td>Python 报 <code>ModuleNotFoundError</code></td><td>没在虚拟环境里，或者没执行 <code>pip install -e .</code>；示例项目靠 <code>pyproject.toml</code> 里的 <code>pythonpath = ["src"]</code> 让测试找到代码</td></tr>
+  <tr><td>集成测试报连接被拒绝</td><td>数据库没起来。<code>docker compose ps</code> 看状态；端口 54329 被占用的话改 <code>docker-compose.yml</code> 并设置 <code>CRM_DB_URL</code></td></tr>
+  <tr><td>改了迁移脚本但表结构没变</td><td>示例里的迁移只在容器<strong>第一次初始化</strong>时执行。<code>docker compose down -v</code> 后重新启动</td></tr>
+  <tr><td>单独跑能过，一起跑就挂</td><td>测试之间共享了状态。这正是第 2 章「隔离」要讲的事</td></tr>
+  <tr><td>在我电脑上能过，CI 上挂</td><td>依赖了本机才有的东西：时区、文件路径、没提交的文件、数据库里的旧数据</td></tr>
+</table>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>测试框架只做三件事：按约定<strong>发现</strong>测试、逐个<strong>运行</strong>、<strong>汇报</strong>结果。测什么、怎么断言是你的事。</li>
+  <li>生产代码和测试代码分开放；单元测试和集成测试也分开，以便分别运行。</li>
+  <li>写完一个测试，<strong>故意让它失败一次</strong>，确认它真的在检查东西，顺便练习读失败信息：哪个测试、期望与实际、哪一行。</li>
+  <li>配套示例 <code>examples/</code> 里有 CRM 的三种语言实现：10 个单元测试不需要任何依赖，1 个集成测试连真实的 PostgreSQL。</li>
+  <li>覆盖率报告要<strong>分部分看</strong>，用来找没测到的重要代码，不要当成目标。</li>
+  <li>把测试接进 CI：每次推送都在干净环境里跑，快的在前、慢的在后，红了先修。</li>
+</ul>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>按「从零写第一个测试」走一遍，包括故意弄坏再修好那一步。</li>
+    <li>把配套示例克隆下来，跑通你所用语言的单元测试和集成测试。</li>
+    <li>打开示例里的 <code>User</code> 类，把 <code>changeEmail</code> 里 <code>delta</code> 的 <code>1 : -1</code> 改成 <code>-1 : 1</code>。跑单元测试：哪些测试红了？失败信息告诉了你什么？</li>
+    <li>改回来。再把 <code>MessageBus</code> 里的 <code>"NewEmail"</code> 改成 <code>"Email"</code>。这次跑单元测试是红还是绿？集成测试呢？想想为什么（答案在第 9 章）。</li>
+    <li>生成 HTML 覆盖率报告，找到 <code>domain</code> 里没被覆盖的那几行。它们值得补一个测试吗？</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>
