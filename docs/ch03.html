@@ -1,0 +1,1240 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 3 章 · 单元测试的结构 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="3">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 3 章</span>
+<h1>单元测试的结构</h1>
+<p class="lede">
+  这一章是「基本功」：一个测试方法内部怎么分段、怎么命名、重复的准备代码怎么复用、
+  相似的测试怎么合并。这些规矩看着琐碎，却直接决定了三个月后你还读不读得懂自己写的测试。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>用 <strong>AAA 模式</strong>（准备 — 执行 — 断言）组织每一个测试</li>
+    <li>从「执行段有几行」看出被测代码的封装问题</li>
+    <li>用<strong>工厂方法</strong>而不是构造函数 / <code>setUp</code> 来复用测试夹具</li>
+    <li>给测试起一个业务人员也能看懂的名字</li>
+    <li>会用<strong>参数化测试</strong>和<strong>流式断言</strong></li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<div class="box note">
+  <div class="t">&#9432; 关于测试框架</div>
+  <p>
+    原书用的是 .NET 的 xUnit。各语言的测试框架长得都差不多，学会一个，别的上手就很快。本教程使用：
+  </p>
+  <div class="tw" style="margin:10px 0 0">
+  <table>
+    <tr><th>概念</th><th>原书（C# / xUnit）</th><th>Java（JUnit 5）</th><th>Python（pytest）</th><th>TypeScript（Vitest）</th></tr>
+    <tr><td>标记一个测试</td><td><code>[Fact]</code></td><td><code>@Test</code></td><td>函数名以 <code>test_</code> 开头</td><td><code>test('...', fn)</code></td></tr>
+    <tr><td>每个测试前执行</td><td>构造函数</td><td><code>@BeforeEach</code></td><td>fixture</td><td><code>beforeEach</code></td></tr>
+    <tr><td>每个测试后执行</td><td><code>Dispose()</code></td><td><code>@AfterEach</code></td><td>fixture 里 <code>yield</code> 之后</td><td><code>afterEach</code></td></tr>
+    <tr><td>参数化测试</td><td><code>[Theory]</code> + <code>[InlineData]</code></td><td><code>@ParameterizedTest</code> + <code>@CsvSource</code></td><td><code>@pytest.mark.parametrize</code></td><td><code>test.each</code></td></tr>
+    <tr><td>流式断言</td><td>Fluent Assertions</td><td>AssertJ</td><td>原生 <code>assert</code> 已经够好读</td><td>内置 <code>expect</code></td></tr>
+  </table>
+  </div>
+</div>
+
+<h2 id="aaa">AAA 模式：准备、执行、断言</h2>
+
+<p>
+  AAA（也叫 3A）主张把每个测试分成三段：<strong>Arrange</strong>（准备）、<strong>Act</strong>（执行）、<strong>Assert</strong>（断言）。
+  用一个只有加法的计算器来看：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class Calculator {
+    public double sum(double first, double second) {
+        return first + second;
+    }
+}
+
+class CalculatorTests {
+    @Test
+    void sum_of_two_numbers() {
+        // Arrange
+        double first = 10;
+        double second = 20;
+        var calculator = new Calculator();
+
+        // Act
+        double result = calculator.sum(first, second);
+
+        // Assert
+        assertEquals(30, result);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class Calculator:
+    def sum(self, first: float, second: float) -&gt; float:
+        return first + second
+
+
+def test_sum_of_two_numbers():
+    # Arrange
+    first = 10
+    second = 20
+    calculator = Calculator()
+
+    # Act
+    result = calculator.sum(first, second)
+
+    # Assert
+    assert result == 30
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class Calculator {
+  sum(first: number, second: number): number {
+    return first + second
+  }
+}
+
+describe('Calculator', () =&gt; {
+  test('sum of two numbers', () =&gt; {
+    // Arrange
+    const first = 10
+    const second = 20
+    const calculator = new Calculator()
+
+    // Act
+    const result = calculator.sum(first, second)
+
+    // Assert
+    expect(result).toBe(30)
+  })
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 3.1 · 仓库 <code>code/Book/Chapter3/Listing1/CalculatorTests.cs</code></p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="一个测试方法被分成准备、执行、断言三段">
+  <rect class="bx-b" x="20" y="20" width="230" height="150" rx="12"/>
+  <text class="ttl on-b" x="135" y="48" text-anchor="middle">Arrange · 准备</text>
+  <text class="lbl" x="135" y="76" text-anchor="middle">把被测系统（SUT）和它的</text>
+  <text class="lbl" x="135" y="94" text-anchor="middle">依赖摆成需要的状态</text>
+  <text class="mono sm" x="135" y="124" text-anchor="middle">first = 10; second = 20</text>
+  <text class="mono sm" x="135" y="142" text-anchor="middle">calculator = new Calculator()</text>
+
+  <rect class="bx-a" x="265" y="20" width="230" height="150" rx="12"/>
+  <text class="ttl on-a" x="380" y="48" text-anchor="middle">Act · 执行</text>
+  <text class="lbl" x="380" y="76" text-anchor="middle">调用 SUT 上的方法，</text>
+  <text class="lbl" x="380" y="94" text-anchor="middle">传入依赖，拿到输出</text>
+  <text class="mono sm" x="380" y="133" text-anchor="middle">result = calculator.sum(…)</text>
+
+  <rect class="bx-g" x="510" y="20" width="230" height="150" rx="12"/>
+  <text class="ttl on-g" x="625" y="48" text-anchor="middle">Assert · 断言</text>
+  <text class="lbl" x="625" y="76" text-anchor="middle">验证结果：返回值、最终状态，</text>
+  <text class="lbl" x="625" y="94" text-anchor="middle">或对协作者的调用</text>
+  <text class="mono sm" x="625" y="133" text-anchor="middle">result 应该等于 30</text>
+
+  <path class="ln" d="M252 95 H261" marker-end="url(#ar)"/>
+  <path class="ln" d="M497 95 H506" marker-end="url(#ar)"/>
+
+  <text class="sm" x="135" y="196" text-anchor="middle">Given（给定……）</text>
+  <text class="sm" x="380" y="196" text-anchor="middle">When（当……）</text>
+  <text class="sm" x="625" y="196" text-anchor="middle">Then（那么……）</text>
+  <text class="lbl" x="380" y="230" text-anchor="middle">Given-When-Then 是同一个结构的另一种叫法，对非技术人员更友好</text>
+</svg>
+<figcaption>图 3-1　AAA 的三段，以及它和 Given-When-Then 的对应关系</figcaption>
+</figure>
+
+<p>
+  这个模式最大的好处是<strong>统一</strong>：整个测试集里的所有测试长得都一样。一旦习惯了，任何测试拿来就能读懂，
+  这直接降低了整个测试集的维护成本。
+</p>
+
+<div class="box tip">
+  <div class="t">&#128161; 先写哪一段？</div>
+  <p>
+    <strong>先有生产代码再写测试</strong>：从 Arrange 写起，因为你已经知道行为是什么了。<br>
+    <strong>做 TDD（先写测试）</strong>：可以从 Assert 写起。这时你对功能了解还不多，
+    先写下「我期望得到什么」，再去想怎么实现。这其实就是我们平常解决问题的思路 —— 先想目标，再想办法。
+  </p>
+</div>
+
+<h3>避免出现多个准备 / 执行 / 断言段</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="一个测试里出现多次执行和断言，说明它验证了多个行为，应该拆成多个测试">
+  <text class="ttl on-r" x="20" y="26">&#10007; 一个测试里做了一串事</text>
+  <rect class="bx-b" x="20" y="42" width="110" height="32" rx="7"/><text class="lbl on-b" x="75" y="63" text-anchor="middle">准备</text>
+  <rect class="bx-a" x="70" y="82" width="110" height="32" rx="7"/><text class="lbl on-a" x="125" y="103" text-anchor="middle">执行</text>
+  <rect class="bx-g" x="120" y="122" width="110" height="32" rx="7"/><text class="lbl on-g" x="175" y="143" text-anchor="middle">断言</text>
+  <rect class="bx-a" x="170" y="162" width="110" height="32" rx="7"/><text class="lbl on-a" x="225" y="183" text-anchor="middle">再执行</text>
+  <rect class="bx-g" x="220" y="202" width="110" height="32" rx="7"/><text class="lbl on-g" x="275" y="223" text-anchor="middle">再断言</text>
+
+  <path class="ln-a" d="M345 138 H405" marker-end="url(#ar-a)"/>
+  <text class="sm" x="375" y="128" text-anchor="middle">拆开</text>
+
+  <text class="ttl on-g" x="420" y="26">&#10003; 每个执行动作一个测试</text>
+  <rect class="bx" x="420" y="42" width="320" height="86" rx="10"/>
+  <text class="sm" x="434" y="62">测试 1</text>
+  <rect class="bx-b" x="434" y="74" width="90" height="32" rx="7"/><text class="lbl on-b" x="479" y="95" text-anchor="middle">准备</text>
+  <rect class="bx-a" x="534" y="74" width="90" height="32" rx="7"/><text class="lbl on-a" x="579" y="95" text-anchor="middle">执行</text>
+  <rect class="bx-g" x="634" y="74" width="90" height="32" rx="7"/><text class="lbl on-g" x="679" y="95" text-anchor="middle">断言</text>
+
+  <rect class="bx" x="420" y="146" width="320" height="86" rx="10"/>
+  <text class="sm" x="434" y="166">测试 2</text>
+  <rect class="bx-b" x="434" y="178" width="90" height="32" rx="7"/><text class="lbl on-b" x="479" y="199" text-anchor="middle">准备</text>
+  <rect class="bx-a" x="534" y="178" width="90" height="32" rx="7"/><text class="lbl on-a" x="579" y="199" text-anchor="middle">执行</text>
+  <rect class="bx-g" x="634" y="178" width="90" height="32" rx="7"/><text class="lbl on-g" x="679" y="199" text-anchor="middle">断言</text>
+</svg>
+<figcaption>图 3-2　多个执行段是「一次验证太多东西」的信号</figcaption>
+</figure>
+
+<p>
+  看到执行段被断言隔开、出现了好几次，就说明这个测试在验证<strong>多个行为单元</strong>。
+  按第 2 章的定义，它已经不是单元测试，而是集成测试了。把每个执行动作抽成一个独立的测试。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 唯一的例外</div>
+  <p>
+    <strong>已经很慢</strong>的集成测试，为了不让它更慢，可以把几个测试合并成一个带多次执行和断言的测试 ——
+    特别是当系统状态自然地一环扣一环（上一步的执行正好是下一步的准备）时。
+    单元测试和够快的集成测试不需要这种优化。
+  </p>
+</div>
+
+<h3>避免在测试里写 if</h3>
+
+<p>
+  测试 —— 不管是单元测试还是集成测试 —— 应该是一串<strong>没有分支</strong>的简单步骤。
+  出现 <code>if</code> 同样说明测试一次验证了太多东西，应该拆开。
+  这一条<strong>没有例外</strong>：测试里的分支没有任何好处，只会让测试更难读。
+</p>
+
+<h2 id="size">每一段该有多大</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="三段的典型大小：准备段最大，执行段通常只有一行，断言段可以有多个断言但不要太大">
+  <rect class="bx-b" x="20" y="30" width="360" height="56" rx="10"/>
+  <text class="ttl on-b" x="36" y="54">准备段：通常最大</text>
+  <text class="sm" x="36" y="74">可以和另外两段加起来一样大；再大就该抽工厂方法了</text>
+
+  <rect class="bx-a" x="20" y="96" width="130" height="44" rx="10"/>
+  <text class="ttl on-a" x="36" y="123">执行段：一行</text>
+  <text class="sm" x="162" y="114">超过一行 &rarr; 警惕！</text>
+  <text class="sm" x="162" y="132">可能是 SUT 的公开 API 封装出了问题</text>
+
+  <rect class="bx-g" x="20" y="150" width="230" height="44" rx="10"/>
+  <text class="ttl on-g" x="36" y="177">断言段：可以有多个断言</text>
+  <text class="sm" x="262" y="168">一个行为可以有多个结果，都验证没问题</text>
+  <text class="sm" x="262" y="186">但太长 &rarr; 可能生产代码缺了一个抽象</text>
+
+  <text class="sm" x="560" y="54">矩形的宽度示意</text>
+  <text class="sm" x="560" y="72">各段的相对代码量</text>
+  <path class="ln-d" d="M548 62 H392"/>
+</svg>
+<figcaption>图 3-3　三段的典型比例</figcaption>
+</figure>
+
+<h3>执行段超过一行，说明什么</h3>
+
+<p>先看正常的版本 —— 执行段只有一行，这是 API 设计良好的标志：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// Act
+boolean success = customer.purchase(store, Product.SHAMPOO, 5);
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# Act
+success = customer.purchase(store, Product.SHAMPOO, 5)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// Act
+const success = customer.purchase(store, Product.Shampoo, 5)
+</pre></div>
+</div>
+
+<p>再看有问题的版本 —— 完成一次购买要调两个方法：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// Act
+boolean success = customer.purchase(store, Product.SHAMPOO, 5);
+store.removeInventory(success, Product.SHAMPOO, 5);   // 调用方必须「记得」再调这一步
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# Act
+success = customer.purchase(store, Product.SHAMPOO, 5)
+store.remove_inventory(success, Product.SHAMPOO, 5)   # 调用方必须「记得」再调这一步
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// Act
+const success = customer.purchase(store, Product.Shampoo, 5)
+store.removeInventory(success, Product.Shampoo, 5)   // 调用方必须「记得」再调这一步
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 3.2 / 3.3</p>
+
+<p>
+  注意，问题<strong>不在测试</strong>，测试验证的还是同一个行为。问题在 <code>Customer</code> 的 API：
+  从业务角度看，一次成功的购买有两个结果 —— 顾客拿到商品、商店库存减少 —— 这两件事必须<strong>一起发生</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="需要调用方连续调用两个方法才能完成的操作，如果只调了第一个，就会出现顾客拿到了商品而库存没减少的不一致状态">
+  <rect class="bx" x="20" y="24" width="150" height="46" rx="8"/>
+  <text class="lbl" x="95" y="52" text-anchor="middle">调用方代码</text>
+
+  <path class="ln-g" d="M172 38 H316" marker-end="url(#ar-g)"/>
+  <text class="sm on-g" x="244" y="30" text-anchor="middle">① purchase()</text>
+  <rect class="bx-g" x="320" y="18" width="190" height="40" rx="8"/>
+  <text class="lbl on-g" x="415" y="43" text-anchor="middle">顾客拿到了 5 瓶洗发水</text>
+
+  <path class="ln-r" d="M172 60 C230 60 250 104 316 104" marker-end="url(#ar-r)" style="stroke-dasharray:5 4"/>
+  <text class="sm on-r" x="218" y="108" text-anchor="middle">② 忘了调</text>
+  <rect class="bx-r" x="320" y="84" width="190" height="40" rx="8"/>
+  <text class="lbl on-r" x="415" y="109" text-anchor="middle">库存还是 10，没减</text>
+
+  <path class="ln-r" d="M512 38 H560 V104 H514"/>
+  <path class="ln-r" d="M560 71 H586" marker-end="url(#ar-r)"/>
+  <rect class="bx-r" x="590" y="40" width="150" height="62" rx="8"/>
+  <text class="ttl on-r" x="665" y="66" text-anchor="middle">不变量被破坏</text>
+  <text class="sm" x="665" y="86" text-anchor="middle">数据前后不一致</text>
+
+  <rect class="bx-a" x="20" y="150" width="720" height="60" rx="10"/>
+  <text class="ttl on-a" x="36" y="174">解药：封装</text>
+  <text class="lbl" x="36" y="196">让 purchase() 自己把库存减掉，一个公开方法完成整件事。调用方就没有机会只做一半了。</text>
+</svg>
+<figcaption>图 3-4　一个操作要靠调用方记得调两次方法，就给「只做一半」留下了机会</figcaption>
+</figure>
+
+<div class="term">
+  <b class="w">不变量被破坏（invariant violation）与封装（encapsulation）</b>
+  <p>
+    「卖出去的数量必须从库存里扣掉」这种必须始终成立的条件叫<strong>不变量</strong>。
+    保护代码、不让它进入不一致状态的做法，叫<strong>封装</strong>。
+    不一致一旦写进数据库就很麻烦了：重启应用解决不了，只能逐条处理脏数据，甚至要联系客户。
+  </p>
+</div>
+
+<p>
+  「执行段只有一行」这条规矩对绝大多数包含业务逻辑的代码都成立，对工具类和基础设施代码则没那么严格。
+  所以不是「绝对不能」，而是<strong>每次遇到都要检查一下是不是封装出了漏洞</strong>。
+</p>
+
+<h3>断言段可以有几个断言</h3>
+
+<p>
+  你可能听过「一个测试只能有一个断言」。这条规矩的出发点是「测试对象要尽可能小」——
+  而第 2 章已经说过这个前提是错的：单元是<strong>行为</strong>单元，一个行为可以有多个结果，在一个测试里把它们都验证了完全没问题。
+</p>
+<p>
+  不过断言段太长也是个信号：可能生产代码少了一个抽象。比如与其逐个断言返回对象的每个属性，
+  不如给这个类定义好相等性比较，然后用一个断言和期望值整体比较。
+</p>
+
+<h3>那清理（teardown）阶段呢</h3>
+
+<p>
+  有人会加上第四段：清理 —— 删除测试创建的文件、关闭数据库连接等。它通常是一个被全类测试共用的独立方法，所以不算在 AAA 里。
+  <strong>大多数单元测试不需要清理</strong>，因为它们不碰进程外依赖，不会留下需要收拾的副作用。清理是集成测试的事（第三部分）。
+</p>
+
+<h2 id="readable">让测试更好读的两个小习惯</h2>
+
+<h3>把被测系统统一命名为 sut</h3>
+
+<p>
+  SUT 是你要触发的行为的<strong>入口</strong>。行为可以跨好几个类，但入口只有一个。
+  当依赖比较多时，一眼分清「谁是被测对象、谁是依赖」很重要 —— 所以，<strong>永远把它叫 <code>sut</code></strong>。
+</p>
+
+<h3>用空行代替注释分隔三段</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void sum_of_two_numbers() {
+    double first = 10;
+    double second = 20;
+    var sut = new Calculator();                // 被测对象叫 sut
+
+    double result = sut.sum(first, second);
+
+    assertEquals(30, result);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_sum_of_two_numbers():
+    first = 10
+    second = 20
+    sut = Calculator()                # 被测对象叫 sut
+
+    result = sut.sum(first, second)
+
+    assert result == 30
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('sum of two numbers', () =&gt; {
+  const first = 10
+  const second = 20
+  const sut = new Calculator()                // 被测对象叫 sut
+
+  const result = sut.sum(first, second)
+
+  expect(result).toBe(30)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 3.4 / 3.5</p>
+
+<div class="tw">
+<table>
+  <tr><th>情况</th><th>做法</th></tr>
+  <tr><td>测试遵循 AAA，且准备段和断言段内部不需要额外空行</td><td><strong>去掉注释</strong>，用两个空行分隔三段</td></tr>
+  <tr><td>测试较大，准备段内部还要用空行分出几个配置步骤（集成测试常见）</td><td><strong>保留</strong> <code>// Arrange</code> <code>// Act</code> <code>// Assert</code> 注释</td></tr>
+</table>
+</div>
+
+<div class="box deep">
+  <div class="t">&#128300; 为什么原书作者喜欢「Fact」这个词</div>
+  <p>
+    xUnit 用 <code>[Fact]</code>（事实）而不是 <code>[Test]</code> 来标记测试。作者很喜欢这一点，因为它强调：
+    <strong>每个测试都在讲一个故事</strong> —— 一个关于问题领域的、不可再分的场景或事实，测试通过就证明这个事实成立。
+    测试失败，要么说明故事过时了需要重写，要么说明系统本身需要修。
+  </p>
+  <p>测试不应该是「生产代码做了什么」的流水账，而应该是对应用行为的更高层的描述，最好业务人员也看得懂。</p>
+</div>
+
+<h2 id="fixtures">在测试之间复用夹具</h2>
+
+<div class="term">
+  <b class="w">测试夹具（test fixture）</b>
+  <p>
+    测试运行时所依托的对象：可以是传给 SUT 的普通依赖，也可以是数据库里的数据、硬盘上的文件。
+    每次测试前它都得处于一个已知的、<strong>固定</strong>（fixed）的状态，这样测试才能每次得到相同结果 —— 所以叫 fixture。
+  </p>
+</div>
+
+<p>准备段经常很长，把它抽出来复用很合理。但有两种抽法，只有一种是好的。</p>
+
+<h3>&#10007; 不好的方式：放进构造函数 / setUp</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+class CustomerTests {
+    private Store store;      // 共享的夹具
+    private Customer sut;
+
+    @BeforeEach               // 每个测试之前都会运行
+    void setUp() {
+        store = new Store();
+        store.addInventory(Product.SHAMPOO, 10);
+        sut = new Customer();
+    }
+
+    @Test
+    void purchase_succeeds_when_enough_inventory() {
+        boolean success = sut.purchase(store, Product.SHAMPOO, 5);
+
+        assertThat(success).isTrue();
+        assertThat(store.getInventory(Product.SHAMPOO)).isEqualTo(5);
+    }
+
+    @Test
+    void purchase_fails_when_not_enough_inventory() {
+        boolean success = sut.purchase(store, Product.SHAMPOO, 15);
+
+        assertThat(success).isFalse();
+        assertThat(store.getInventory(Product.SHAMPOO)).isEqualTo(10);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+import pytest
+
+
+@pytest.fixture(autouse=True)        # 每个测试之前都会自动运行
+def _setup(request):
+    store = Store()
+    store.add_inventory(Product.SHAMPOO, 10)
+    request.module.store = store     # 共享的夹具
+    request.module.sut = Customer()
+
+
+def test_purchase_succeeds_when_enough_inventory():
+    success = sut.purchase(store, Product.SHAMPOO, 5)
+
+    assert success is True
+    assert store.get_inventory(Product.SHAMPOO) == 5
+
+
+def test_purchase_fails_when_not_enough_inventory():
+    success = sut.purchase(store, Product.SHAMPOO, 15)
+
+    assert success is False
+    assert store.get_inventory(Product.SHAMPOO) == 10
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+describe('Customer', () =&gt; {
+  let store: Store        // 共享的夹具
+  let sut: Customer
+
+  beforeEach(() =&gt; {      // 每个测试之前都会运行
+    store = new Store()
+    store.addInventory(Product.Shampoo, 10)
+    sut = new Customer()
+  })
+
+  test('purchase succeeds when enough inventory', () =&gt; {
+    const success = sut.purchase(store, Product.Shampoo, 5)
+
+    expect(success).toBe(true)
+    expect(store.getInventory(Product.Shampoo)).toBe(5)
+  })
+
+  test('purchase fails when not enough inventory', () =&gt; {
+    const success = sut.purchase(store, Product.Shampoo, 15)
+
+    expect(success).toBe(false)
+    expect(store.getInventory(Product.Shampoo)).toBe(10)
+  })
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 3.7 · 仓库 <code>code/Book/Chapter3/CustomerTests_3/CustomerTests.cs</code></p>
+
+<p>测试代码确实短了，但带来两个明显的问题：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128279;</span><h4>测试之间高度耦合</h4>
+    <p>有人为了自己的测试把 <code>10</code> 改成 <code>15</code>，其他测试关于「初始库存是 10」的假设就全错了，莫名其妙地失败。
+       <strong>修改一个测试不应该影响其他测试。</strong></p></div>
+  <div class="card"><span class="ic">&#128065;</span><h4>可读性下降</h4>
+    <p>只看测试方法本身，看不到全貌。你得去类里别的地方翻，才知道这个测试到底在什么前提下运行。</p></div>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 两种「独立」</div>
+  <p>
+    第 2 章说的是测试要能<strong>独立运行</strong>（不共享运行时状态）。这里说的是测试要能<strong>独立修改</strong>（不共享准备代码里的假设）。
+    两者都是设计良好的测试应有的特性。
+  </p>
+</div>
+
+<h3>&#10003; 更好的方式：私有工厂方法</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+class CustomerTests {
+    @Test
+    void purchase_succeeds_when_enough_inventory() {
+        Store store = createStoreWithInventory(Product.SHAMPOO, 10);
+        Customer sut = createCustomer();
+
+        boolean success = sut.purchase(store, Product.SHAMPOO, 5);
+
+        assertThat(success).isTrue();
+        assertThat(store.getInventory(Product.SHAMPOO)).isEqualTo(5);
+    }
+
+    @Test
+    void purchase_fails_when_not_enough_inventory() {
+        Store store = createStoreWithInventory(Product.SHAMPOO, 10);
+        Customer sut = createCustomer();
+
+        boolean success = sut.purchase(store, Product.SHAMPOO, 15);
+
+        assertThat(success).isFalse();
+        assertThat(store.getInventory(Product.SHAMPOO)).isEqualTo(10);
+    }
+
+    private static Store createStoreWithInventory(Product product, int quantity) {
+        var store = new Store();
+        store.addInventory(product, quantity);
+        return store;
+    }
+
+    private static Customer createCustomer() {
+        return new Customer();
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_purchase_succeeds_when_enough_inventory():
+    store = create_store_with_inventory(Product.SHAMPOO, 10)
+    sut = create_customer()
+
+    success = sut.purchase(store, Product.SHAMPOO, 5)
+
+    assert success is True
+    assert store.get_inventory(Product.SHAMPOO) == 5
+
+
+def test_purchase_fails_when_not_enough_inventory():
+    store = create_store_with_inventory(Product.SHAMPOO, 10)
+    sut = create_customer()
+
+    success = sut.purchase(store, Product.SHAMPOO, 15)
+
+    assert success is False
+    assert store.get_inventory(Product.SHAMPOO) == 10
+
+
+def create_store_with_inventory(product: Product, quantity: int) -&gt; Store:
+    store = Store()
+    store.add_inventory(product, quantity)
+    return store
+
+
+def create_customer() -&gt; Customer:
+    return Customer()
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+describe('Customer', () =&gt; {
+  test('purchase succeeds when enough inventory', () =&gt; {
+    const store = createStoreWithInventory(Product.Shampoo, 10)
+    const sut = createCustomer()
+
+    const success = sut.purchase(store, Product.Shampoo, 5)
+
+    expect(success).toBe(true)
+    expect(store.getInventory(Product.Shampoo)).toBe(5)
+  })
+
+  test('purchase fails when not enough inventory', () =&gt; {
+    const store = createStoreWithInventory(Product.Shampoo, 10)
+    const sut = createCustomer()
+
+    const success = sut.purchase(store, Product.Shampoo, 15)
+
+    expect(success).toBe(false)
+    expect(store.getInventory(Product.Shampoo)).toBe(10)
+  })
+})
+
+function createStoreWithInventory(product: Product, quantity: number): Store {
+  const store = new Store()
+  store.addInventory(product, quantity)
+  return store
+}
+
+function createCustomer(): Customer {
+  return new Customer()
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 3.8 · 仓库 <code>code/Book/Chapter3/CustomerTests_4/CustomerTests.cs</code></p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="共享 setUp 让所有测试依赖同一份隐藏状态；工厂方法让每个测试明确说出自己需要什么">
+  <rect class="bx-r" x="20" y="20" width="350" height="200" rx="12"/>
+  <text class="ttl on-r" x="36" y="46">&#10007; 共享的 setUp</text>
+  <rect class="bx" x="120" y="60" width="150" height="40" rx="8"/>
+  <text class="lbl" x="195" y="78" text-anchor="middle">setUp()</text>
+  <text class="mono sm" x="195" y="93" text-anchor="middle">库存 = 10</text>
+  <rect class="bx" x="40" y="150" width="90" height="36" rx="7"/><text class="lbl" x="85" y="173" text-anchor="middle">测试 A</text>
+  <rect class="bx" x="150" y="150" width="90" height="36" rx="7"/><text class="lbl" x="195" y="173" text-anchor="middle">测试 B</text>
+  <rect class="bx" x="260" y="150" width="90" height="36" rx="7"/><text class="lbl" x="305" y="173" text-anchor="middle">测试 C</text>
+  <path class="ln-r" d="M85 148 L165 104" marker-end="url(#ar-r)"/>
+  <path class="ln-r" d="M195 148 V104" marker-end="url(#ar-r)"/>
+  <path class="ln-r" d="M305 148 L225 104" marker-end="url(#ar-r)"/>
+  <text class="sm" x="195" y="208" text-anchor="middle">改一处，三个测试的前提都变了；读测试时还看不见它</text>
+
+  <rect class="bx-g" x="390" y="20" width="350" height="200" rx="12"/>
+  <text class="ttl on-g" x="406" y="46">&#10003; 工厂方法</text>
+  <rect class="bx" x="406" y="62" width="318" height="34" rx="7"/>
+  <text class="mono sm" x="416" y="83">A：createStoreWithInventory(SHAMPOO, 10)</text>
+  <rect class="bx" x="406" y="104" width="318" height="34" rx="7"/>
+  <text class="mono sm" x="416" y="125">B：createStoreWithInventory(SHAMPOO, 10)</text>
+  <rect class="bx" x="406" y="146" width="318" height="34" rx="7"/>
+  <text class="mono sm" x="416" y="167">C：createStoreWithInventory(BOOK, 3)</text>
+  <text class="sm" x="565" y="208" text-anchor="middle">每个测试自己说清楚要什么；复用的只是「怎么造」</text>
+</svg>
+<figcaption>图 3-5　复用的应该是<strong>构造的方法</strong>，而不是<strong>构造出来的那份状态</strong></figcaption>
+</figure>
+
+<p>
+  工厂方法同样缩短了测试，但<strong>保留了完整的上下文</strong>。
+  <code>createStoreWithInventory(Product.SHAMPOO, 10)</code> 这一行：
+</p>
+<ul>
+  <li><strong>可读</strong> —— 不用点进工厂方法，就知道造出来的是「有 10 瓶洗发水的商店」。</li>
+  <li><strong>可复用</strong> —— 别的测试可以用不同的参数调用它。只要工厂方法足够通用（让测试自己指定想要什么），它就不会把测试耦合在一起。</li>
+</ul>
+
+<div class="box tip">
+  <div class="t">&#128161; Python 读者：pytest 的 fixture 算哪种？</div>
+  <p>
+    pytest 的 fixture 是显式地通过<strong>参数名</strong>注入的，测试签名上看得见用了哪个，比隐式的 <code>setUp</code> 好。
+    但如果 fixture 直接返回一个固定状态的对象（<code>store_with_10_shampoo</code>），「改一处影响所有人」的问题依然存在。
+    想让每个测试自己指定参数，可以让 fixture 返回一个工厂函数，或者干脆像上面那样用普通函数。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 例外：几乎所有测试都要用的夹具</div>
+  <p>
+    如果一个夹具被类里全部（或几乎全部）测试使用，可以在构造函数 / <code>setUp</code> 里初始化。
+    最典型的是集成测试用的数据库连接。即便如此，更好的做法是抽一个<strong>基类</strong>，在基类里初始化，让各个测试类继承：
+  </p>
+</div>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+abstract class IntegrationTests {
+    protected Database database;
+
+    @BeforeEach
+    void openDatabase() { database = new Database(); }
+
+    @AfterEach
+    void closeDatabase() { database.close(); }
+}
+
+class CustomerTests extends IntegrationTests {
+    @Test
+    void purchase_succeeds_when_enough_inventory() {
+        /* 在这里使用 database */
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# conftest.py —— pytest 用 fixture 代替基类
+import pytest
+
+
+@pytest.fixture
+def database():
+    db = Database()
+    yield db          # yield 之前是准备，之后是清理
+    db.close()
+
+
+# test_customer.py
+def test_purchase_succeeds_when_enough_inventory(database):
+    ...  # 在这里使用 database
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// integration-tests.ts —— 用一个辅助函数代替基类
+export function useDatabase() {
+  let database: Database
+  beforeEach(() =&gt; { database = new Database() })
+  afterEach(() =&gt; { database.close() })
+  return () =&gt; database
+}
+
+// customer.test.ts
+describe('Customer', () =&gt; {
+  const db = useDatabase()
+
+  test('purchase succeeds when enough inventory', () =&gt; {
+    /* 在这里使用 db() */
+  })
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 3.9</p>
+
+<h2 id="naming">给测试起名字</h2>
+
+<p>好名字能让你一眼看出测试在验证什么、系统是怎么表现的。最流行、但可能也最没用的一种命名规范是：</p>
+
+<div class="code" data-lang="text"><pre>
+[被测方法]_[场景]_[期望结果]
+
+例：Sum_TwoNumbers_ReturnsSum
+    IsDeliveryValid_InvalidDate_ReturnsFalse
+</pre></div>
+
+<p>
+  它没用的原因是：<strong>它引导你关注实现细节，而不是行为</strong>。对比一下：
+</p>
+
+<div class="vs">
+  <div class="old">
+    <div class="h">&#10007; 死板的格式</div>
+    <div class="code" data-lang="text"><pre>
+Sum_TwoNumbers_ReturnsSum
+</pre></div>
+    <p style="padding:0 16px 12px;margin:0;font-size:14px;color:var(--fg-soft)">为什么 Sum 出现了两次？Returns 是返回到哪儿？对不了解代码的人来说像天书。</p>
+  </div>
+  <div class="new">
+    <div class="h">&#10003; 一句大白话</div>
+    <div class="code" data-lang="text"><pre>
+Sum_of_two_numbers
+</pre></div>
+    <p style="padding:0 16px 12px;margin:0;font-size:14px;color:var(--fg-soft)">「两个数的和」。对被测行为朴素、直接的描述。</p>
+  </div>
+</div>
+
+<p>
+  有人会说：测试是程序员写给程序员看的，程序员本来就擅长解读晦涩的名字。这话只对了一部分。
+  晦涩的名字对<strong>每个人</strong>都是一笔认知税：你得多花脑力才能弄清它到底验证什么、和哪条业务需求有关。
+  单看一次不多，但日积月累，它会慢慢抬高整个测试集的维护成本。
+</p>
+
+<h3>命名的四条准则</h3>
+
+<ol class="steps">
+  <li><strong>不要遵循死板的命名格式。</strong>复杂行为的高层描述塞不进一个固定的模板，给表达留点自由。</li>
+  <li><strong>像是在向一位熟悉业务、但不懂编程的人描述场景那样起名。</strong>比如领域专家或业务分析师。</li>
+  <li><strong>用下划线分隔单词。</strong>名字长的时候可读性提升明显。（测试<em>类</em>的名字一般不长，不需要下划线。）</li>
+  <li><strong>不要把被测方法的名字放进测试名。</strong>你测的是行为，不是代码。方法改名不影响行为，测试名就不该跟着改。</li>
+</ol>
+
+<div class="box note">
+  <div class="t">&#9432; 三种语言里怎么落实</div>
+  <ul>
+    <li><strong>Java</strong>：方法名允许下划线，<code>void delivery_with_a_past_date_is_invalid()</code> 完全合法；也可以配 <code>@DisplayName("过去日期的配送无效")</code>。</li>
+    <li><strong>Python</strong>：本来就是蛇形命名，只是必须以 <code>test_</code> 开头：<code>test_delivery_with_a_past_date_is_invalid</code>。</li>
+    <li><strong>TypeScript</strong>：测试名是字符串，直接写句子：<code>test('delivery with a past date is invalid', …)</code>。</li>
+  </ul>
+  <p>
+    另外，测试类叫 <code>CalculatorTests</code> 并不代表里面只能测 <code>Calculator</code> 这一个类。
+    把它看成一个<strong>入口</strong>就好：通过这个 API 去验证某个行为单元，行为本身可以跨多个类。
+  </p>
+</div>
+
+<h3>实战：一步步改好一个测试名</h3>
+
+<p>这个测试验证「配送日期是过去的日期时，配送无效」：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="测试名称的五步演进，从死板格式逐步改成一句陈述事实的话">
+  <rect class="bx-r" x="20" y="14" width="500" height="38" rx="8"/>
+  <text class="mono" x="34" y="38">IsDeliveryValid_InvalidDate_ReturnsFalse</text>
+  <text class="sm on-r" x="534" y="38">起点：死板格式，带方法名</text>
+
+  <path class="ln" d="M60 54 V72" marker-end="url(#ar)"/>
+  <rect class="bx" x="20" y="76" width="500" height="38" rx="8"/>
+  <text class="mono" x="34" y="100">Delivery_with_invalid_date_should_be_considered_invalid</text>
+  <text class="sm" x="534" y="92">① 改成大白话</text>
+  <text class="sm" x="534" y="108">方法名自然消失了</text>
+
+  <path class="ln" d="M60 116 V134" marker-end="url(#ar)"/>
+  <rect class="bx" x="20" y="138" width="500" height="38" rx="8"/>
+  <text class="mono" x="34" y="162">Delivery_with_past_date_should_be_considered_invalid</text>
+  <text class="sm" x="534" y="154">② 说具体：「无效」到底</text>
+  <text class="sm" x="534" y="170">指什么？是「过去的」日期</text>
+
+  <path class="ln" d="M60 178 V196" marker-end="url(#ar)"/>
+  <rect class="bx" x="20" y="200" width="500" height="38" rx="8"/>
+  <text class="mono" x="34" y="224">Delivery_with_past_date_is_invalid</text>
+  <text class="sm" x="534" y="216">③ 去掉废话 considered</text>
+  <text class="sm" x="534" y="232">④ should be &rarr; is</text>
+
+  <path class="ln-g" d="M60 240 V258" marker-end="url(#ar-g)"/>
+  <rect class="bx-g" x="20" y="262" width="500" height="38" rx="8"/>
+  <text class="mono on-g" x="34" y="286">Delivery_with_a_past_date_is_invalid</text>
+  <text class="sm on-g" x="534" y="278">⑤ 补上冠词 a，读起来</text>
+  <text class="sm on-g" x="534" y="294">就是一句通顺的英语</text>
+
+  <text class="sm" x="20" y="322">终点是一句直截了当的<tspan font-weight="700">事实陈述</tspan>：过去日期的配送是无效的。</text>
+</svg>
+<figcaption>图 3-6　测试名的演进。中文团队如果用中文写测试名，原则完全一样</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 为什么不用 should be</div>
+  <p>
+    测试陈述的是关于某个行为的一个<strong>事实</strong>。陈述事实时没有「愿望」的位置 ——
+    不是「应该无效」，而是「<strong>是</strong>无效的」。把 <code>should be</code> 换成 <code>is</code>。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 准则 4 的例外</div>
+  <p>
+    工具类代码没有业务逻辑，它的行为对业务人员没什么意义。给这类代码写测试时，在测试名里用被测方法名是可以的。
+  </p>
+</div>
+
+<h2 id="parameterized">参数化测试</h2>
+
+<p>
+  一个测试通常不足以完整描述一个行为。行为越复杂，需要的「事实」越多，测试数量会迅速膨胀。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="应用有多个行为，每个行为由多个事实描述，每个事实是一个测试。相似的事实可以用参数化测试合并">
+  <rect class="bx" x="310" y="12" width="140" height="34" rx="8"/><text class="ttl" x="380" y="34" text-anchor="middle">应用</text>
+  <path class="ln" d="M350 48 L160 78" marker-end="url(#ar)"/>
+  <path class="ln" d="M380 48 V76" marker-end="url(#ar)"/>
+  <path class="ln" d="M410 48 L600 78" marker-end="url(#ar)"/>
+
+  <rect class="bx-b" x="70" y="80" width="180" height="34" rx="8"/><text class="lbl on-b" x="160" y="102" text-anchor="middle">行为 1：配送日期校验</text>
+  <rect class="bx-b" x="290" y="80" width="180" height="34" rx="8"/><text class="lbl on-b" x="380" y="102" text-anchor="middle">行为 2</text>
+  <rect class="bx-b" x="510" y="80" width="180" height="34" rx="8"/><text class="lbl on-b" x="600" y="102" text-anchor="middle">行为 N</text>
+
+  <path class="ln" d="M110 116 L70 146" marker-end="url(#ar)"/>
+  <path class="ln" d="M140 116 V144" marker-end="url(#ar)"/>
+  <path class="ln" d="M180 116 L210 146" marker-end="url(#ar)"/>
+  <path class="ln" d="M210 116 L280 146" marker-end="url(#ar)"/>
+
+  <rect class="bx-d" x="14" y="140" width="250" height="56" rx="10" style="fill:none;stroke:var(--accent)"/>
+  <rect class="bx" x="24" y="150" width="70" height="36" rx="7"/><text class="sm" x="59" y="166" text-anchor="middle">事实 1</text><text class="sm" x="59" y="180" text-anchor="middle">昨天 &#10007;</text>
+  <rect class="bx" x="104" y="150" width="70" height="36" rx="7"/><text class="sm" x="139" y="166" text-anchor="middle">事实 2</text><text class="sm" x="139" y="180" text-anchor="middle">今天 &#10007;</text>
+  <rect class="bx" x="184" y="150" width="70" height="36" rx="7"/><text class="sm" x="219" y="166" text-anchor="middle">事实 3</text><text class="sm" x="219" y="180" text-anchor="middle">明天 &#10007;</text>
+  <rect class="bx-g" x="274" y="150" width="70" height="36" rx="7"/><text class="sm" x="309" y="166" text-anchor="middle">事实 4</text><text class="sm on-g" x="309" y="180" text-anchor="middle">后天 &#10003;</text>
+
+  <text class="sm on-a" x="139" y="216" text-anchor="middle">三个相似的反例 &rarr; 合并成一个参数化测试</text>
+  <text class="sm on-g" x="309" y="216" text-anchor="middle">正例单独</text>
+  <text class="sm on-g" x="309" y="232" text-anchor="middle">留一个测试</text>
+  <text class="sm" x="560" y="170" text-anchor="middle">每个事实 = 一个测试用例</text>
+  <text class="sm" x="560" y="188" text-anchor="middle">行为越复杂，需要的事实越多</text>
+</svg>
+<figcaption>图 3-7　行为 &rarr; 事实 &rarr; 测试。相似的事实可以合并</figcaption>
+</figure>
+
+<p>
+  假设配送规则是：<strong>最早只能选两天之后</strong>。那除了「过去的日期」，还得测今天、明天、后天。
+  四个测试方法只有日期不同 —— 用参数化测试合并：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+class DeliveryServiceTests {
+    @ParameterizedTest
+    @CsvSource({
+        "-1, false",     // 每一行都是关于这个行为的一条独立事实
+        " 0, false",
+        " 1, false",
+        " 2, true"
+    })
+    void can_detect_an_invalid_delivery_date(int daysFromNow, boolean expected) {
+        var sut = new DeliveryService();
+        var delivery = new Delivery(LocalDateTime.now().plusDays(daysFromNow));
+
+        boolean isValid = sut.isDeliveryValid(delivery);
+
+        assertThat(isValid).isEqualTo(expected);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+import pytest
+from datetime import datetime, timedelta
+
+
+@pytest.mark.parametrize(
+    "days_from_now, expected",
+    [
+        (-1, False),     # 每一行都是关于这个行为的一条独立事实
+        (0, False),
+        (1, False),
+        (2, True),
+    ],
+)
+def test_can_detect_an_invalid_delivery_date(days_from_now, expected):
+    sut = DeliveryService()
+    delivery = Delivery(date=datetime.now() + timedelta(days=days_from_now))
+
+    is_valid = sut.is_delivery_valid(delivery)
+
+    assert is_valid == expected
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+describe('DeliveryService', () =&gt; {
+  test.each([
+    [-1, false],     // 每一行都是关于这个行为的一条独立事实
+    [0, false],
+    [1, false],
+    [2, true],
+  ])('can detect an invalid delivery date (%i days from now)', (daysFromNow, expected) =&gt; {
+    const sut = new DeliveryService()
+    const delivery = new Delivery(addDays(new Date(), daysFromNow))
+
+    const isValid = sut.isDeliveryValid(delivery)
+
+    expect(isValid).toBe(expected)
+  })
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 3.11 · 仓库 <code>code/Book/Chapter3/Listing6/DeliveryServiceTests.cs</code></p>
+
+<p>
+  测试代码少了很多，但有代价：<strong>现在很难看出这个测试方法代表了哪些事实</strong>。参数越多越难看懂。
+  折中的办法是把正例单独拿出来，让名字在最关键的地方 —— 区分有效和无效日期的那条线 —— 保持表达力：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@ParameterizedTest
+@ValueSource(ints = {-1, 0, 1})
+void detects_an_invalid_delivery_date(int daysFromNow) {
+    var sut = new DeliveryService();
+    var delivery = new Delivery(LocalDateTime.now().plusDays(daysFromNow));
+
+    boolean isValid = sut.isDeliveryValid(delivery);
+
+    assertThat(isValid).isFalse();
+}
+
+@Test
+void the_soonest_delivery_date_is_two_days_from_now() {
+    var sut = new DeliveryService();
+    var delivery = new Delivery(LocalDateTime.now().plusDays(2));
+
+    boolean isValid = sut.isDeliveryValid(delivery);
+
+    assertThat(isValid).isTrue();
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+@pytest.mark.parametrize("days_from_now", [-1, 0, 1])
+def test_detects_an_invalid_delivery_date(days_from_now):
+    sut = DeliveryService()
+    delivery = Delivery(date=datetime.now() + timedelta(days=days_from_now))
+
+    is_valid = sut.is_delivery_valid(delivery)
+
+    assert is_valid is False
+
+
+def test_the_soonest_delivery_date_is_two_days_from_now():
+    sut = DeliveryService()
+    delivery = Delivery(date=datetime.now() + timedelta(days=2))
+
+    is_valid = sut.is_delivery_valid(delivery)
+
+    assert is_valid is True
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test.each([-1, 0, 1])('detects an invalid delivery date (%i days from now)', (daysFromNow) =&gt; {
+  const sut = new DeliveryService()
+  const delivery = new Delivery(addDays(new Date(), daysFromNow))
+
+  const isValid = sut.isDeliveryValid(delivery)
+
+  expect(isValid).toBe(false)
+})
+
+test('the soonest delivery date is two days from now', () =&gt; {
+  const sut = new DeliveryService()
+  const delivery = new Delivery(addDays(new Date(), 2))
+
+  const isValid = sut.isDeliveryValid(delivery)
+
+  expect(isValid).toBe(true)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 3.12</p>
+
+<div class="box key">
+  <div class="t">&#9733; 参数化测试的取舍：代码量 vs. 可读性</div>
+  <ul>
+    <li>只有当「哪组参数代表正例、哪组代表反例」<strong>一目了然</strong>时，才把正反例放在同一个方法里。</li>
+    <li>否则，把正例抽成单独的测试。</li>
+    <li>行为太复杂时，干脆<strong>不要用</strong>参数化测试，每个正例反例各写一个方法。</li>
+  </ul>
+</div>
+
+<h3>为参数化测试生成数据</h3>
+
+<p>
+  上面为什么传 <code>daysFromNow</code> 而不是直接传日期？在 C# 和 Java 里，注解 / 特性的内容必须是<strong>编译期常量</strong>，
+  <code>now()</code> 这种运行时才能求值的表达式放不进去。解决办法是让一个方法来提供数据：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@ParameterizedTest
+@MethodSource("data")           // 指向下面那个静态方法
+void can_detect_an_invalid_delivery_date(LocalDateTime deliveryDate, boolean expected) {
+    /* ... */
+}
+
+static Stream&lt;Arguments&gt; data() {
+    var now = LocalDateTime.now();
+    return Stream.of(
+        Arguments.of(now.minusDays(1), false),
+        Arguments.of(now, false),
+        Arguments.of(now.plusDays(1), false),
+        Arguments.of(now.plusDays(2), true)
+    );
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# Python 的装饰器参数在模块加载时求值，可以直接写表达式
+now = datetime.now()
+
+
+@pytest.mark.parametrize(
+    "delivery_date, expected",
+    [
+        (now - timedelta(days=1), False),
+        (now, False),
+        (now + timedelta(days=1), False),
+        (now + timedelta(days=2), True),
+    ],
+)
+def test_can_detect_an_invalid_delivery_date(delivery_date, expected):
+    ...
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// test.each 接收的是普通数组，在文件加载时求值，可以直接写表达式
+const now = new Date()
+
+test.each([
+  [addDays(now, -1), false],
+  [now, false],
+  [addDays(now, 1), false],
+  [addDays(now, 2), true],
+])('can detect an invalid delivery date', (deliveryDate, expected) =&gt; {
+  /* ... */
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 3.13</p>
+
+<h2 id="assertions">用断言库让断言更好读</h2>
+
+<div class="vs">
+  <div class="old">
+    <div class="h">传统断言：期望值在前</div>
+    <div class="code" data-lang="java"><pre>
+assertEquals(30, result);
+</pre></div>
+  </div>
+  <div class="new">
+    <div class="h">流式断言：像一句话</div>
+    <div class="code" data-lang="java"><pre>
+assertThat(result).isEqualTo(30);
+</pre></div>
+  </div>
+</div>
+
+<p>
+  人类更喜欢以<strong>故事</strong>的形式吸收信息，而故事都遵循同一个句式：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 170" role="img" aria-label="故事的句式是主语、动作、宾语。流式断言也遵循这个句式">
+  <rect class="bx-b" x="110" y="20" width="150" height="40" rx="8"/><text class="ttl on-b" x="185" y="45" text-anchor="middle">主语</text>
+  <rect class="bx-a" x="305" y="20" width="150" height="40" rx="8"/><text class="ttl on-a" x="380" y="45" text-anchor="middle">动作</text>
+  <rect class="bx-g" x="500" y="20" width="150" height="40" rx="8"/><text class="ttl on-g" x="575" y="45" text-anchor="middle">宾语</text>
+
+  <text class="lbl" x="185" y="86" text-anchor="middle">小明</text>
+  <text class="lbl" x="380" y="86" text-anchor="middle">打开了</text>
+  <text class="lbl" x="575" y="86" text-anchor="middle">门</text>
+
+  <text class="mono" x="185" y="116" text-anchor="middle">result</text>
+  <text class="mono" x="380" y="116" text-anchor="middle">should be / isEqualTo</text>
+  <text class="mono" x="575" y="116" text-anchor="middle">30</text>
+
+  <text class="sm" x="20" y="86">日常语言</text>
+  <text class="sm" x="20" y="116">流式断言</text>
+  <text class="sm" x="380" y="152" text-anchor="middle">assertEquals(30, result) 把宾语放在了主语前面，读起来要在脑子里倒一下</text>
+</svg>
+<figcaption>图 3-8　流式断言之所以好读，是因为它遵循「主语 — 动作 — 宾语」的自然语序</figcaption>
+</figure>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// AssertJ
+@Test
+void sum_of_two_numbers() {
+    var sut = new Calculator();
+
+    double result = sut.sum(10, 20);
+
+    assertThat(result).isEqualTo(30);
+}
+
+// 还有大量针对字符串、集合、日期等的辅助方法
+assertThat(names).hasSize(3).contains("Alice").doesNotContain("Bob");
+assertThat(message).startsWith("Hello").endsWith("!");
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# pytest 重写了原生 assert，失败时会自动展示两边的值，本身就够好读
+def test_sum_of_two_numbers():
+    sut = Calculator()
+
+    result = sut.sum(10, 20)
+
+    assert result == 30
+
+
+# 集合、字符串直接用 Python 表达式
+assert len(names) == 3 and "Alice" in names and "Bob" not in names
+assert message.startswith("Hello") and message.endswith("!")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// Vitest / Jest 内置的 expect 本身就是流式的
+test('sum of two numbers', () =&gt; {
+  const sut = new Calculator()
+
+  const result = sut.sum(10, 20)
+
+  expect(result).toBe(30)
+})
+
+// 还有大量针对字符串、集合、对象等的匹配器
+expect(names).toHaveLength(3)
+expect(names).toContain('Alice')
+expect(message).toMatch(/^Hello.*!$/)
+</pre></div>
+</div>
+<p class="src">对应仓库 <code>code/Book/Chapter3/FluentAssertions_1/CalculatorTests.cs</code></p>
+
+<p>
+  唯一的缺点是多引入了一个依赖（虽然只在开发时用，不会发布到生产环境）。
+</p>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>所有单元测试都应遵循 <strong>AAA</strong>：准备、执行、断言。出现多个执行段，说明测试验证了多个行为，应拆开。</li>
+  <li>测试里不要有 <code>if</code>。</li>
+  <li><strong>执行段超过一行</strong>是 SUT 的 API 有问题的信号：它要求调用方记得把几个动作一起做，可能导致不变量被破坏。防止这种情况的做法叫封装。</li>
+  <li>把被测对象命名为 <code>sut</code>。用空行（简单测试）或注释（复杂测试）分隔三段。</li>
+  <li>复用夹具初始化代码用<strong>工厂方法</strong>，不要放构造函数 / setUp。这样测试之间保持解耦，读起来也有完整上下文。</li>
+  <li>不要用死板的命名格式。像给懂业务的非程序员讲故事那样起名；用下划线分词；不要包含被测方法名；用 is 不用 should be。</li>
+  <li>参数化测试能减少相似测试的代码量，代价是名字变得更泛、更难读。</li>
+  <li>断言库通过调整语序让断言读起来像自然语言。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>你的测试执行段有三行：先 <code>order.addItem()</code>，再 <code>order.recalculateTotal()</code>，最后 <code>order.save()</code>。这暗示了什么？</summary>
+  <p>很可能是封装问题：调用方必须记得在加商品之后重算总价，否则订单总价和明细就不一致了（不变量被破坏）。<code>addItem</code> 应该自己负责更新总价。</p>
+</details>
+<details class="quiz">
+  <summary>把 <code>GetDiscount_PremiumCustomer_Returns10Percent</code> 改成符合本章准则的名字。</summary>
+  <p>例如 <code>Premium_customer_gets_a_10_percent_discount</code>。去掉了方法名，是一句陈述事实的话，业务人员也读得懂。</p>
+</details>
+<details class="quiz">
+  <summary>什么时候可以在 <code>setUp</code> / 构造函数里初始化夹具？</summary>
+  <p>当它被类里全部或几乎全部测试使用时，典型的是集成测试的数据库连接。更好的做法是放到基类（或共享的 fixture）里。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>实现 <code>DeliveryService.isDeliveryValid</code>（规则：配送日期至少在两天之后），先写四个独立的测试，再把它们重构成「一个参数化的反例测试 + 一个独立的正例测试」。</li>
+    <li>从你的项目里找一个用了 <code>setUp</code> / <code>beforeEach</code> 的测试类，把共享状态改成工厂方法。改完后单看每个测试方法，是不是更容易读懂了？</li>
+    <li>挑五个现有的测试名，按图 3-6 的步骤逐个改写。</li>
+    <li>找一个执行段超过一行的测试，分析是不是封装问题；如果是，试着修改生产代码的 API 让执行段回到一行。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

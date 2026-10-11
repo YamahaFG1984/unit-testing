@@ -1,0 +1,1200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 8 章 · 为什么需要集成测试 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="8">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 8 章 · 第三部分开始</span>
+<h1>为什么需要集成测试</h1>
+<p class="lede">
+  你有没有遇到过这种情况：单元测试全绿，应用一跑就挂？各个零件单独验证过了，不代表装在一起能转。
+  这一章讲集成测试的定位：它该测什么、测多少，哪些外部依赖用真的、哪些用 Mock，以及几条顺带让代码更健康的实践。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>知道集成测试负责四象限里的哪一块，以及它和单元测试的数量比例</li>
+    <li>分清<strong>受管依赖</strong>和<strong>不受管依赖</strong>：前者用真的，后者用 Mock</li>
+    <li>给第 7 章的 CRM 写出第一个集成测试</li>
+    <li>知道什么时候该用接口，什么时候不该</li>
+    <li>三条最佳实践：明确领域模型边界、减少分层、消除循环依赖</li>
+    <li>知道日志该不该测、怎么测</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="what">什么是集成测试</h2>
+
+<p>
+  复习一下第 2 章：单元测试要同时满足三条 —— 验证一个行为单元、运行得快、与其他测试隔离。
+  <strong>不满足其中至少一条的测试，就是集成测试。</strong>换句话说：不是单元测试的测试，都是集成测试。
+</p>
+
+<p>
+  实践中，集成测试几乎总是在验证系统与<strong>进程外依赖</strong>的协同工作 —— 也就是第 7 章四象限里的<strong>控制器</strong>那一格：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 310" role="img" aria-label="四象限图：单元测试覆盖左上角的领域模型与算法，集成测试覆盖右下角的控制器，琐碎代码和过度复杂的代码不测">
+  <path class="ln" d="M190 24 V268 H620" marker-start="url(#ar)" marker-end="url(#ar)"/>
+  <text class="sm" x="120" y="140" text-anchor="middle">复杂度 /</text>
+  <text class="sm" x="120" y="156" text-anchor="middle">领域重要性</text>
+  <text class="sm" x="405" y="290" text-anchor="middle">协作者的数量 &rarr;</text>
+
+  <rect class="bx-g" x="200" y="36" width="200" height="108" rx="10"/>
+  <text class="ttl on-g" x="300" y="68" text-anchor="middle">领域模型与算法</text>
+  <rect class="bx" x="232" y="84" width="136" height="38" rx="19"/>
+  <text class="lbl on-g" x="300" y="108" text-anchor="middle">&#9654; 单元测试</text>
+
+  <rect class="bx-d" x="410" y="36" width="200" height="108" rx="10"/>
+  <text class="lbl" x="510" y="80" text-anchor="middle">过度复杂的代码</text>
+  <text class="sm" x="510" y="102" text-anchor="middle">不测 —— 先拆掉它</text>
+
+  <rect class="bx-d" x="200" y="154" width="200" height="104" rx="10"/>
+  <text class="lbl" x="300" y="198" text-anchor="middle">琐碎代码</text>
+  <text class="sm" x="300" y="220" text-anchor="middle">不测 —— 不值得</text>
+
+  <rect class="bx-b" x="410" y="154" width="200" height="104" rx="10"/>
+  <text class="ttl on-b" x="510" y="184" text-anchor="middle">控制器</text>
+  <rect class="bx" x="442" y="200" width="136" height="38" rx="19"/>
+  <text class="lbl on-b" x="510" y="224" text-anchor="middle">&#9654; 集成测试</text>
+
+  <text class="sm" x="640" y="196">把领域模型和</text>
+  <text class="sm" x="640" y="212">进程外依赖</text>
+  <text class="sm" x="640" y="228">粘起来的代码</text>
+</svg>
+<figcaption>图 8-1　所有测试都只应该落在这两格：单元测试管领域模型，集成测试管控制器</figcaption>
+</figure>
+
+<h3>再看测试金字塔：该写多少集成测试</h3>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>单元测试</th><th>集成测试</th></tr>
+  <tr><td><strong>防止回归</strong></td><td>较弱</td><td style="color:var(--green);font-weight:700">更强 —— 执行的代码更多（包括库的代码）</td></tr>
+  <tr><td><strong>抵抗重构</strong></td><td>好</td><td style="color:var(--green);font-weight:700">更好 —— 离生产代码更远</td></tr>
+  <tr><td><strong>快速反馈</strong></td><td style="color:var(--green);font-weight:700">快</td><td>慢 —— 直接操作进程外依赖</td></tr>
+  <tr><td><strong>可维护性</strong></td><td style="color:var(--green);font-weight:700">好</td><td>差 —— 要保持依赖可用，涉及的协作者多、测试更大</td></tr>
+</table>
+</div>
+
+<div class="term">
+  <b class="w">快乐路径（happy path）与边界情况（edge case）</b>
+  <p><strong>快乐路径</strong>：一个业务场景成功执行的那条路。<strong>边界情况</strong>：业务场景的执行以错误告终的情况。</p>
+</div>
+
+<div class="box key">
+  <div class="t">&#9733; 分工的经验法则</div>
+  <p>
+    <strong>用单元测试检查尽可能多的边界情况；用集成测试覆盖一条快乐路径，外加那些单元测试覆盖不了的边界情况。</strong>
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="一个业务场景的众多边界情况由大量单元测试覆盖，一条最长的快乐路径由一个集成测试覆盖">
+  <rect class="bx" x="20" y="16" width="720" height="40" rx="8"/>
+  <text class="ttl" x="380" y="41" text-anchor="middle">一个业务场景（例如：修改用户邮箱）</text>
+
+  <rect class="bx-g" x="20" y="70" width="470" height="150" rx="12"/>
+  <text class="ttl on-g" x="36" y="96">单元测试：尽可能多的边界情况</text>
+  <rect class="bx" x="36" y="110" width="140" height="28" rx="6"/><text class="sm" x="106" y="129" text-anchor="middle">非公司 &rarr; 公司邮箱</text>
+  <rect class="bx" x="186" y="110" width="140" height="28" rx="6"/><text class="sm" x="256" y="129" text-anchor="middle">公司 &rarr; 非公司邮箱</text>
+  <rect class="bx" x="336" y="110" width="140" height="28" rx="6"/><text class="sm" x="406" y="129" text-anchor="middle">类型不变</text>
+  <rect class="bx" x="36" y="146" width="140" height="28" rx="6"/><text class="sm" x="106" y="165" text-anchor="middle">新旧邮箱相同</text>
+  <rect class="bx" x="186" y="146" width="140" height="28" rx="6"/><text class="sm" x="256" y="165" text-anchor="middle">邮箱已确认，不能改</text>
+  <rect class="bx" x="336" y="146" width="140" height="28" rx="6"/><text class="sm" x="406" y="165" text-anchor="middle">员工数不能为负</text>
+  <text class="sm on-g" x="36" y="202">快、便宜 —— 把大部分工作量放在这里，维护成本才低</text>
+
+  <rect class="bx-b" x="510" y="70" width="230" height="150" rx="12"/>
+  <text class="ttl on-b" x="526" y="96">集成测试：一条快乐路径</text>
+  <rect class="bx" x="526" y="110" width="198" height="44" rx="6"/>
+  <text class="sm" x="625" y="128" text-anchor="middle">选<tspan font-weight="700">最长</tspan>的那条：</text>
+  <text class="sm" x="625" y="144" text-anchor="middle">经过所有进程外依赖</text>
+  <text class="sm on-b" x="526" y="180">慢、贵 —— 每个场景一两个，</text>
+  <text class="sm on-b" x="526" y="198">确保系统整体是通的</text>
+</svg>
+<figcaption>图 8-2　金字塔的由来：边界情况交给单元测试，集成测试只负责「整条链路走得通」</figcaption>
+</figure>
+
+<p>
+  金字塔的形状取决于项目复杂度。简单的应用在「领域模型与算法」那一格几乎没代码，测试就成了<strong>矩形</strong>（单元和集成一样多），
+  极简单的情况下甚至没有单元测试。但集成测试<strong>始终有价值</strong> —— 代码再简单，也得确认它和其他子系统配合得起来。
+</p>
+
+<h3>集成测试 vs. 快速失败</h3>
+
+<p>
+  「单元测试覆盖不了的边界情况」也不是都要用集成测试去测。<strong>如果某个边界情况处理错了会让整个应用立刻崩溃，就没必要测它。</strong>
+</p>
+
+<p>
+  例子：第 7 章里控制器必须先调 <code>user.canChangeEmail()</code> 再调 <code>changeEmail()</code>。
+  「控制器忘了先检查」这个边界情况理论上可以用集成测试覆盖，但没什么价值：
+  如果控制器真忘了，<code>changeEmail()</code> 里的前置条件会让应用<strong>第一次执行就炸</strong>，很容易发现和修复，而且不会弄脏数据。
+</p>
+
+<div class="term">
+  <b class="w">快速失败原则（Fail Fast）</b>
+  <p>一旦发生任何意料之外的错误，立刻停止当前操作（通常是抛异常）。它是集成测试的一个可行替代方案。</p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 180" role="img" aria-label="快速失败的两个好处：缩短反馈回路，保护持久化状态">
+  <rect class="bx-r" x="20" y="50" width="130" height="60" rx="10"/>
+  <text class="ttl on-r" x="85" y="76" text-anchor="middle">出现了 Bug</text>
+  <text class="sm" x="85" y="96" text-anchor="middle">状态不对劲</text>
+
+  <path class="ln-g" d="M152 66 H226" marker-end="url(#ar-g)"/>
+  <rect class="bx-g" x="230" y="20" width="510" height="60" rx="10"/>
+  <text class="ttl on-g" x="246" y="44">&#10003; 快速失败：立刻抛异常，操作中止</text>
+  <text class="sm" x="246" y="64">第一次运行就暴露 &rarr; 反馈回路短，修起来便宜；坏状态没机会写进数据库</text>
+
+  <path class="ln-r" d="M152 94 H226" marker-end="url(#ar-r)" style="stroke-dasharray:5 4"/>
+  <rect class="bx-r" x="230" y="96" width="510" height="60" rx="10"/>
+  <text class="ttl on-r" x="246" y="120">&#10007; 带病运行：假装没事继续往下走</text>
+  <text class="sm" x="246" y="140">坏状态被存进数据库 &rarr; 脏数据扩散；等到生产环境才发现，修复成本高出几个数量级</text>
+</svg>
+<figcaption>图 8-3　快速失败的两个好处：缩短反馈回路、保护持久化状态</figcaption>
+</figure>
+
+<p>
+  <strong>前置条件</strong>是快速失败的典型应用：前置条件不满足，说明对应用状态的某个假设错了，这一定是 Bug。
+  另一个例子是<strong>读配置文件</strong>：配置不完整或不正确就抛异常，并且把这段逻辑放在应用启动的地方 —— 配置有问题，应用干脆起不来。
+</p>
+
+<div class="box tip">
+  <div class="t">&#128161; 再说一遍</div>
+  <p>不写测试，也好过写一个坏测试。<strong>不能提供显著价值的测试就是坏测试。</strong>
+     （注意：<code>User</code> 里的前置条件本身<em>应该</em>测，但用单元测试就够了，不需要集成测试。）</p>
+</div>
+
+<h2 id="deps">哪些进程外依赖该用真的</h2>
+
+<p>集成测试验证的是系统与进程外依赖的集成。验证方式有两种：用<strong>真的</strong>依赖，或者用 <strong>Mock</strong> 替换。什么时候用哪种？</p>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>受管依赖（managed）</th><th>不受管依赖（unmanaged）</th></tr>
+  <tr><td><strong>定义</strong></td><td>你完全控制的进程外依赖：<strong>只能通过你的应用访问</strong></td><td>你无法完全控制的进程外依赖：<strong>别的应用也看得见</strong></td></tr>
+  <tr><td><strong>交互是否对外可见</strong></td><td>不可见</td><td>可见</td></tr>
+  <tr><td><strong>典型例子</strong></td><td>应用自己的数据库</td><td>SMTP 服务器、消息总线</td></tr>
+  <tr><td><strong>与它的通信属于</strong></td><td>实现细节</td><td>可观察行为（契约）</td></tr>
+  <tr><td><strong>集成测试里怎么办</strong></td><td style="color:var(--green);font-weight:700">用真实实例</td><td style="color:var(--accent-2);font-weight:700">用 Mock 替换</td></tr>
+</table>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 280" role="img" aria-label="应用数据库是受管依赖，与应用被视为一个整体，在集成测试中使用真实实例。SMTP 服务是不受管依赖，与它的通信是对外契约，在集成测试中用 Mock 替换">
+  <rect class="bx-d" x="280" y="16" width="460" height="248" rx="14" style="stroke:var(--green);fill:none"/>
+  <text class="sm on-g" x="728" y="36" text-anchor="end">集成测试的范围：都用真的</text>
+
+  <polygon class="bx" points="490,140 440,227 340,227 290,140 340,53 440,53"/>
+  <text class="ttl" x="390" y="136" text-anchor="middle">你的应用</text>
+  <text class="sm" x="390" y="156" text-anchor="middle">（进程内）</text>
+
+  <rect class="bx-g" x="560" y="96" width="160" height="88" rx="10"/>
+  <text class="ttl on-g" x="640" y="124" text-anchor="middle">应用数据库</text>
+  <text class="sm" x="640" y="144" text-anchor="middle">受管依赖</text>
+  <text class="sm" x="640" y="162" text-anchor="middle">验证它的<tspan font-weight="700">最终状态</tspan></text>
+  <path class="ln-g" d="M494 140 H556" marker-end="url(#ar-g)" marker-start="url(#ar-g)"/>
+  <text class="sm" x="525" y="204" text-anchor="middle">实现细节</text>
+
+  <rect class="bx-b" x="20" y="40" width="170" height="64" rx="10"/>
+  <text class="lbl on-b" x="105" y="68" text-anchor="middle">第三方系统</text>
+  <text class="sm" x="105" y="88" text-anchor="middle">（外部客户端）</text>
+  <path class="ln-b" style="stroke-width:2.2" d="M192 76 L306 114" marker-end="url(#ar-b)" marker-start="url(#ar-b)"/>
+
+  <rect class="bx-a" x="20" y="176" width="170" height="72" rx="10"/>
+  <text class="ttl on-a" x="105" y="202" text-anchor="middle">SMTP 服务</text>
+  <text class="sm" x="105" y="220" text-anchor="middle">不受管依赖</text>
+  <text class="sm on-a" x="105" y="238" text-anchor="middle">&rarr; 用 Mock 替换</text>
+  <path class="ln-a" style="stroke-width:2.2" d="M306 168 L194 204" marker-end="url(#ar-a)"/>
+  <text class="sm" x="226" y="148" text-anchor="middle">可观察行为</text>
+  <text class="sm" x="226" y="164" text-anchor="middle">（契约）</text>
+</svg>
+<figcaption>图 8-4　受管依赖用真的，不受管依赖用 Mock</figcaption>
+</figure>
+
+<p><strong>为什么不受管依赖要用 Mock？</strong>因为你必须保持与它们的通信模式不变（向后兼容），Mock 正好擅长这个：不管怎么重构，都能确认调用还在、参数没变。</p>
+<p>
+  <strong>为什么受管依赖要用真的？</strong>因为只有你的应用和它对话，没有向后兼容的负担。外部客户端不关心你的数据库怎么组织，只关心系统的<strong>最终状态</strong>。
+  用真实实例，测试就能从外部客户端的视角验证这个最终状态；而且做数据库重构（给列改名，甚至换一种数据库）时，这样的测试也能帮上忙。
+</p>
+
+<h3>既受管又不受管的依赖：共享数据库</h3>
+
+<p>
+  典型的故事：系统一开始有自己专用的数据库；过了一阵，另一个系统也需要其中的数据，于是团队图省事，把几张表共享了出去。
+  数据库就成了「一半受管、一半不受管」。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="共享数据库被分成两部分：其他应用也能访问的表视为不受管依赖，用 Mock 替换；只有本应用访问的表视为受管依赖，直接测试">
+  <rect class="bx-b" x="60" y="14" width="200" height="40" rx="8"/><text class="lbl on-b" x="160" y="39" text-anchor="middle">外部应用</text>
+  <rect class="bx" x="500" y="14" width="200" height="40" rx="8"/><text class="lbl" x="600" y="39" text-anchor="middle">你的应用</text>
+
+  <rect class="bx" x="30" y="100" width="700" height="130" rx="14"/>
+  <text class="sm" x="380" y="222" text-anchor="middle">同一个数据库</text>
+
+  <rect class="bx-a" x="46" y="112" width="300" height="92" rx="10"/>
+  <text class="ttl on-a" x="196" y="134" text-anchor="middle">不受管的部分</text>
+  <rect class="bx" x="66" y="146" width="80" height="42" rx="6"/><text class="sm" x="106" y="171" text-anchor="middle">表</text>
+  <rect class="bx" x="156" y="146" width="80" height="42" rx="6"/><text class="sm" x="196" y="171" text-anchor="middle">表</text>
+  <rect class="bx" x="246" y="146" width="80" height="42" rx="6"/><text class="sm" x="286" y="171" text-anchor="middle">表</text>
+
+  <rect class="bx-g" x="414" y="112" width="300" height="92" rx="10"/>
+  <text class="ttl on-g" x="564" y="134" text-anchor="middle">受管的部分</text>
+  <rect class="bx" x="434" y="146" width="80" height="42" rx="6"/><text class="sm" x="474" y="171" text-anchor="middle">表</text>
+  <rect class="bx" x="524" y="146" width="80" height="42" rx="6"/><text class="sm" x="564" y="171" text-anchor="middle">表</text>
+  <rect class="bx" x="614" y="146" width="80" height="42" rx="6"/><text class="sm" x="654" y="171" text-anchor="middle">表</text>
+
+  <path class="ln-b" d="M160 56 V108" marker-end="url(#ar-b)"/>
+  <path class="ln-a" d="M540 56 L300 108" marker-end="url(#ar-a)"/>
+  <path class="ln-g" d="M620 56 V108" marker-end="url(#ar-g)"/>
+  <text class="sm on-a" x="390" y="76" text-anchor="middle">用 Mock 替换</text>
+  <text class="sm on-g" x="670" y="84" text-anchor="middle">直接测试</text>
+</svg>
+<figcaption>图 8-5　对外可见的表当作不受管依赖；其余的表当作受管依赖</figcaption>
+</figure>
+
+<p>
+  用数据库做系统间集成是个<strong>糟糕的方式</strong> —— 它把系统耦合在一起，让后续开发变得复杂。更好的方式是 API（同步通信）或消息总线（异步通信）。
+  但如果你已经有了共享数据库，短期内又改不了：
+</p>
+<ul>
+  <li><strong>别的应用看得见的表</strong>：当作不受管依赖。这些表实际上扮演着消息总线的角色，表里的行就是消息。用 Mock 确保与这些表的通信模式不变。</li>
+  <li><strong>其余的表</strong>：当作受管依赖。验证它们的最终状态，而不是和它们的交互。</li>
+</ul>
+
+<h3>如果集成测试里用不了真的数据库怎么办</h3>
+
+<p>
+  有时出于你控制不了的原因（比如 IT 安全策略、成本），测试环境里就是没法部署那个遗留数据库。那要不要干脆 Mock 掉它？
+</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 不要。那就别写集成测试了</div>
+  <p>
+    Mock 受管依赖会损害集成测试的抵抗重构能力，防止回归的能力也大打折扣。如果数据库是项目里唯一的进程外依赖，
+    这样的「集成测试」比现有的单元测试<strong>多不出任何保护</strong>—— 它唯一多做的事，就是检查控制器调了仓储的哪些方法。
+    你费了一大堆功夫，换来的只是确认控制器里那三行代码没写错。
+  </p>
+  <p><strong>如果没法原样测试数据库，就完全不要写集成测试，把精力集中在领域模型的单元测试上。</strong></p>
+</div>
+
+<h2 id="example">实例：给 CRM 写集成测试</h2>
+
+<p>回到第 7 章的 CRM。「修改邮箱」这个用例里，控制器在数据库、消息总线和领域模型之间做协调：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="修改邮箱用例中控制器的编排：从数据库读用户和公司，调用领域模型的 canChangeEmail 和 changeEmail，把公司和用户存回数据库，向消息总线发消息">
+  <rect class="bx-g" x="20" y="40" width="130" height="110" rx="10"/>
+  <text class="ttl on-g" x="85" y="88" text-anchor="middle">数据库</text>
+  <text class="sm" x="85" y="108" text-anchor="middle">受管依赖</text>
+  <rect class="bx-a" x="20" y="186" width="130" height="50" rx="10"/>
+  <text class="ttl on-a" x="85" y="208" text-anchor="middle">消息总线</text>
+  <text class="sm" x="85" y="226" text-anchor="middle">不受管依赖</text>
+
+  <rect class="bx-b" x="330" y="40" width="140" height="196" rx="12"/>
+  <text class="ttl on-b" x="400" y="130" text-anchor="middle">应用服务</text>
+  <text class="sm" x="400" y="150" text-anchor="middle">（控制器）</text>
+
+  <rect class="bx" x="630" y="60" width="116" height="150" rx="12"/>
+  <text class="ttl" x="688" y="128" text-anchor="middle">业务逻辑</text>
+  <text class="sm" x="688" y="148" text-anchor="middle">（领域模型）</text>
+
+  <path class="ln" d="M152 62 H326" marker-end="url(#ar)"/><text class="mono sm" x="240" y="56" text-anchor="middle">getUserById</text>
+  <path class="ln" d="M152 90 H326" marker-end="url(#ar)"/><text class="mono sm" x="240" y="84" text-anchor="middle">getCompany</text>
+  <path class="ln" d="M326 118 H154" marker-end="url(#ar)"/><text class="mono sm" x="240" y="112" text-anchor="middle">saveCompany</text>
+  <path class="ln" d="M326 140 H154" marker-end="url(#ar)"/><text class="mono sm" x="240" y="158" text-anchor="middle">saveUser</text>
+  <path class="ln-a" d="M326 212 H154" marker-end="url(#ar-a)"/><text class="mono sm" x="240" y="204" text-anchor="middle">sendEmailChangedMessage</text>
+
+  <path class="ln" d="M472 100 H626" marker-end="url(#ar)"/><text class="mono sm" x="549" y="92" text-anchor="middle">canChangeEmail</text>
+  <path class="ln" d="M472 170 H626" marker-end="url(#ar)"/><text class="mono sm" x="549" y="162" text-anchor="middle">changeEmail</text>
+</svg>
+<figcaption>图 8-6　控制器的全部工作就是编排</figcaption>
+</figure>
+
+<h3>测哪些场景</h3>
+
+<p>
+  <strong>最长的快乐路径</strong>是「从公司邮箱改成非公司邮箱」—— 它产生的副作用最多：数据库里用户（类型、邮箱）和公司（员工数）都更新了，还往总线发了消息。
+</p>
+<p>
+  <strong>单元测试覆盖不了的边界情况</strong>只有一个：邮箱不能改的场景。但上面说过，控制器如果漏了这个检查应用会快速失败，所以不用测。
+  结论：<strong>只需要一个集成测试</strong>。
+</p>
+
+<h3>给两个依赖分类</h3>
+<ul>
+  <li><strong>应用数据库</strong> &rarr; 受管依赖 &rarr; 用真的。测试要：往数据库里插入用户和公司 &rarr; 执行改邮箱 &rarr; 验证数据库状态。</li>
+  <li><strong>消息总线</strong> &rarr; 不受管依赖 &rarr; 用 Mock，事后验证控制器和 Mock 之间的交互。</li>
+</ul>
+
+<h3>那端到端测试呢</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="端到端测试针对部署好的应用，所有进程外依赖都是真的。集成测试在同一进程内托管应用，不受管依赖用 Mock 替换，只有受管依赖在进程外">
+  <rect class="bx" x="14" y="14" width="356" height="200" rx="12"/>
+  <text class="ttl" x="30" y="38">端到端测试</text>
+  <path class="ln-d" d="M30 116 H354"/>
+  <text class="sm" x="30" y="108">进程外</text>
+  <text class="sm" x="30" y="132">进程内</text>
+  <rect class="bx-a" x="30" y="52" width="96" height="38" rx="8"/><text class="lbl on-a" x="78" y="76" text-anchor="middle">消息总线</text>
+  <rect class="bx-b" x="146" y="52" width="92" height="38" rx="8"/><text class="lbl on-b" x="192" y="76" text-anchor="middle">应用</text>
+  <rect class="bx-g" x="258" y="52" width="96" height="38" rx="8"/><text class="lbl on-g" x="306" y="76" text-anchor="middle">数据库</text>
+  <path class="ln" d="M142 71 H130" marker-end="url(#ar)"/>
+  <path class="ln" d="M242 71 H254" marker-end="url(#ar)"/>
+  <rect class="bx" x="142" y="150" width="100" height="34" rx="17"/><text class="lbl" x="192" y="172" text-anchor="middle">测试</text>
+  <path class="ln" d="M192 148 V94" marker-end="url(#ar)"/>
+  <text class="sm" x="254" y="164">应用已部署；</text>
+  <text class="sm" x="254" y="180">没有任何 Mock</text>
+
+  <rect class="bx" x="390" y="14" width="356" height="200" rx="12"/>
+  <text class="ttl" x="406" y="38">集成测试</text>
+  <path class="ln-d" d="M406 112 H730"/>
+  <text class="sm" x="406" y="104">进程外</text>
+  <rect class="bx-g" x="560" y="54" width="110" height="38" rx="8"/><text class="lbl on-g" x="615" y="78" text-anchor="middle">数据库</text>
+  <rect class="bx-d" x="410" y="126" width="120" height="38" rx="8"/><text class="lbl" x="470" y="150" text-anchor="middle">消息总线 Mock</text>
+  <rect class="bx-b" x="560" y="126" width="110" height="38" rx="8"/><text class="lbl on-b" x="615" y="150" text-anchor="middle">应用</text>
+  <rect class="bx" x="560" y="174" width="110" height="32" rx="16"/><text class="lbl" x="615" y="195" text-anchor="middle">测试</text>
+  <path class="ln" d="M615 124 V96" marker-end="url(#ar)"/>
+  <path class="ln" d="M556 145 H534" marker-end="url(#ar)"/>
+  <text class="sm" x="406" y="196">只有受管依赖在进程外</text>
+</svg>
+<figcaption>图 8-7　端到端测试 vs. 集成测试的范围</figcaption>
+</figure>
+
+<p>
+  我们的示例项目不写端到端测试。大多数情况下，当集成测试已经把受管依赖纳入范围、只 Mock 不受管依赖时，它提供的保护已经<strong>很接近</strong>端到端测试了。
+  不过你仍然可以写一两个总览式的端到端测试，作为部署后的健全性检查：同样走最长的快乐路径；为了模拟外部客户端，
+  <strong>直接检查消息总线，但通过应用本身去验证数据库状态</strong>。
+</p>
+
+<h3>集成测试，第一版</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void changing_email_from_corporate_to_non_corporate() {
+    // Arrange
+    var db = new Database(CONNECTION_STRING);                    // 真的数据库
+    User user = createUser("user@mycorp.com", UserType.EMPLOYEE, db);
+    createCompany("mycorp.com", 1, db);
+
+    IMessageBus messageBusMock = mock(IMessageBus.class);        // 消息总线用 Mock
+    var sut = new UserController(db, messageBusMock);
+
+    // Act
+    String result = sut.changeEmail(user.getUserId(), "new@gmail.com");
+
+    // Assert
+    assertThat(result).isEqualTo("OK");
+
+    Object[] userData = db.getUserById(user.getUserId());        // 重新从数据库读出来再断言
+    User userFromDb = UserFactory.create(userData);
+    assertThat(userFromDb.getEmail()).isEqualTo("new@gmail.com");
+    assertThat(userFromDb.getType()).isEqualTo(UserType.CUSTOMER);
+
+    Object[] companyData = db.getCompany();
+    Company companyFromDb = CompanyFactory.create(companyData);
+    assertThat(companyFromDb.getNumberOfEmployees()).isEqualTo(0);
+
+    verify(messageBusMock, times(1))                             // 检查与 Mock 的交互
+        .sendEmailChangedMessage(user.getUserId(), "new@gmail.com");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_changing_email_from_corporate_to_non_corporate():
+    # Arrange
+    db = Database(CONNECTION_STRING)                             # 真的数据库
+    user = create_user("user@mycorp.com", UserType.EMPLOYEE, db)
+    create_company("mycorp.com", 1, db)
+
+    message_bus_mock = Mock(spec=MessageBus)                     # 消息总线用 Mock
+    sut = UserController(db, message_bus_mock)
+
+    # Act
+    result = sut.change_email(user.user_id, "new@gmail.com")
+
+    # Assert
+    assert result == "OK"
+
+    user_data = db.get_user_by_id(user.user_id)                  # 重新从数据库读出来再断言
+    user_from_db = UserFactory.create(user_data)
+    assert user_from_db.email == "new@gmail.com"
+    assert user_from_db.type == UserType.CUSTOMER
+
+    company_data = db.get_company()
+    company_from_db = CompanyFactory.create(company_data)
+    assert company_from_db.number_of_employees == 0
+
+    message_bus_mock.send_email_changed_message.assert_called_once_with(   # 检查与 Mock 的交互
+        user.user_id, "new@gmail.com")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changing email from corporate to non corporate', () =&gt; {
+  // Arrange
+  const db = new Database(CONNECTION_STRING)                     // 真的数据库
+  const user = createUser('user@mycorp.com', UserType.Employee, db)
+  createCompany('mycorp.com', 1, db)
+
+  const messageBusMock: IMessageBus = { sendEmailChangedMessage: vi.fn() }   // 消息总线用 Mock
+  const sut = new UserController(db, messageBusMock)
+
+  // Act
+  const result = sut.changeEmail(user.userId, 'new@gmail.com')
+
+  // Assert
+  expect(result).toBe('OK')
+
+  const userData = db.getUserById(user.userId)                   // 重新从数据库读出来再断言
+  const userFromDb = UserFactory.create(userData)
+  expect(userFromDb.email).toBe('new@gmail.com')
+  expect(userFromDb.type).toBe(UserType.Customer)
+
+  const companyData = db.getCompany()
+  const companyFromDb = CompanyFactory.create(companyData)
+  expect(companyFromDb.numberOfEmployees).toBe(0)
+
+  expect(messageBusMock.sendEmailChangedMessage).toHaveBeenCalledOnce()      // 检查与 Mock 的交互
+  expect(messageBusMock.sendEmailChangedMessage)
+    .toHaveBeenCalledWith(user.userId, 'new@gmail.com')
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 8.2 · 仓库 <code>code/Book/Chapter8/Version1/V1.cs</code></p>
+
+<div class="box key">
+  <div class="t">&#9733; 断言时要独立于输入数据，重新读一遍数据库</div>
+  <p>
+    测试在断言阶段<strong>单独查询</strong>了用户和公司的数据，创建新的 <code>userFromDb</code> 和 <code>companyFromDb</code>，再对它们断言。
+    这样测试同时走过了<strong>写</strong>和<strong>读</strong>两条路，防止回归的效果最好。读取要用控制器内部用的同一套代码（<code>Database</code>、<code>UserFactory</code>、<code>CompanyFactory</code>）。
+  </p>
+</div>
+
+<p>
+  这个测试能用，但还有改进空间：断言部分可以用辅助方法缩短；<code>messageBusMock</code> 提供的保护也还没到最好。
+  这两点分别留给第 10 章和第 9 章。
+</p>
+
+<h2 id="interfaces">什么时候该用接口</h2>
+
+<p>
+  很多人会给数据库、消息总线这类进程外依赖都配一个接口，哪怕这个接口<strong>只有一个实现</strong>：
+  <code>IMessageBus</code> / <code>MessageBus</code>、<code>IUserRepository</code> / <code>UserRepository</code>……
+  这种做法太普遍了，几乎没人质疑。常见的两个理由：
+</p>
+
+<div class="tw">
+<table>
+  <tr><th>常见理由</th><th>为什么站不住</th></tr>
+  <tr><td>「接口抽象了进程外依赖，实现了<strong>松耦合</strong>」</td>
+      <td>只有一个实现的接口<strong>不是抽象</strong>，它提供的松耦合并不比那个具体类更多。
+          <strong>真正的抽象是被<em>发现</em>的，不是被<em>发明</em>的</strong> —— 发现总是事后的事：抽象已经存在了，只是代码里还没明确表达出来。
+          所以一个接口要成为真正的抽象，至少得有两个实现。</td></tr>
+  <tr><td>「以后加新功能不用改现有代码，符合<strong>开闭原则</strong>」</td>
+      <td>它违反了一个更基本的原则：<strong>YAGNI</strong>（You Aren't Gonna Need It，你用不上它）。不要为眼下不需要的功能投入时间。
+          一是<strong>机会成本</strong>：这些时间本可以花在现在就需要的功能上，而且等真需要时需求多半已经变了；
+          二是<strong>代码越少越好</strong>：「以防万一」的代码徒增拥有成本。</td></tr>
+</table>
+</div>
+
+<div class="box tip">
+  <div class="t">&#128161;</div>
+  <p>写代码是一种昂贵的解决问题的方式。解决方案需要的代码越少、越简单，越好。</p>
+</div>
+
+<h3>那为什么还要给进程外依赖用接口？</h3>
+
+<p>
+  真正的原因非常实际：<strong>为了能 Mock</strong>，仅此而已。（在 Java / C# 这类静态语言里，没有接口就不方便创建测试替身。）
+  由此得出：
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 只给不受管依赖用接口</div>
+  <p>
+    除非你需要 Mock 某个进程外依赖，否则不要给它引入接口。而你只 Mock 不受管依赖。
+    受管依赖也要<strong>显式注入</strong>控制器，但用<strong>具体类</strong>就行。
+  </p>
+</div>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class UserController {
+    private final Database database;         // 具体类 —— 受管依赖
+    private final IMessageBus messageBus;    // 接口 —— 不受管依赖，需要 Mock
+
+    public UserController(Database database, IMessageBus messageBus) {
+        this.database = database;
+        this.messageBus = messageBus;
+    }
+
+    public String changeEmail(int userId, String newEmail) {
+        /* 方法里使用 database 和 messageBus */
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class UserController:
+    # Python 是鸭子类型，Mock(spec=MessageBus) 不需要接口也能造替身。
+    # 但原则不变：两个依赖都显式注入；只有 message_bus 会在测试里被 Mock。
+    def __init__(self, database: Database, message_bus: MessageBus) -&gt; None:
+        self._database = database            # 受管依赖：测试里传真的
+        self._message_bus = message_bus      # 不受管依赖：测试里传 Mock
+
+    def change_email(self, user_id: int, new_email: str) -&gt; str:
+        ...  # 方法里使用 _database 和 _message_bus
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class UserController {
+  constructor(
+    private readonly database: Database,         // 具体类 —— 受管依赖
+    private readonly messageBus: IMessageBus,    // 接口 —— 不受管依赖，需要 Mock
+  ) {}
+
+  changeEmail(userId: number, newEmail: string): string {
+    /* 方法里使用 database 和 messageBus */
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 8.4.2 节</p>
+
+<h3>给进程内依赖用接口：危险信号</h3>
+
+<p>
+  有的代码库连领域类都配接口：<code>IUser</code> / <code>User</code>。这种接口永远只有一个实现，是一个<strong>巨大的危险信号</strong>。
+  引入它的唯一理由还是为了 Mock —— 但和进程外依赖不同，<strong>你永远不该检查领域类之间的交互</strong>，那会让测试和实现细节耦合（第 5 章）。
+</p>
+
+<h2 id="practices">集成测试的最佳实践</h2>
+
+<p>有三条通用准则。和往常一样，对测试有益的做法，往往也让整个代码库更健康。</p>
+
+<h3>① 让领域模型的边界明确</h3>
+
+<p>
+  在代码库里给领域模型一个<strong>明确的、人尽皆知的位置</strong>。领域模型是关于你要解决的问题的领域知识的集合，给它划一条清晰的边界，有助于理解和推理这部分代码。
+  对测试也有帮助：单元测试针对领域模型，集成测试针对控制器，边界清楚了，两种测试也就好区分了。
+  边界可以是一个独立的模块 / 包 / 命名空间，形式不重要，重要的是所有领域逻辑都在同一把伞下，而不是散落各处。
+</p>
+
+<h3>② 减少分层</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="层次过多的应用每个功能都要穿过很多层，难以理解。精简后只需三层：应用服务层、领域层、基础设施层">
+  <text class="ttl on-r" x="185" y="22" text-anchor="middle">&#10007; 层层间接</text>
+  <rect class="bx" x="30" y="36" width="310" height="34" rx="6"/><text class="lbl" x="44" y="58">应用服务层</text>
+  <rect class="bx" x="30" y="76" width="310" height="34" rx="6"/><text class="lbl" x="44" y="98">业务逻辑实现层</text>
+  <rect class="bx" x="30" y="116" width="310" height="34" rx="6"/><text class="lbl" x="44" y="138">抽象层</text>
+  <rect class="bx" x="30" y="156" width="310" height="34" rx="6"/><text class="lbl" x="44" y="178">持久化层</text>
+  <rect class="bx" x="30" y="196" width="310" height="34" rx="6"/><text class="lbl" x="44" y="218">……</text>
+  <rect x="210" y="30" width="34" height="206" rx="8" style="fill:var(--accent-bg);stroke:var(--accent);stroke-width:1.5;fill-opacity:.7"/>
+  <rect x="258" y="30" width="34" height="206" rx="8" style="fill:var(--blue-bg);stroke:var(--blue);stroke-width:1.5;fill-opacity:.7"/>
+  <text class="sm on-a" x="227" y="254" text-anchor="middle">改邮箱</text>
+  <text class="sm on-b" x="275" y="254" text-anchor="middle">下单</text>
+  <text class="sm" x="185" y="278" text-anchor="middle">每个功能在每一层都占一小块，要拼起来才看得懂</text>
+
+  <text class="ttl on-g" x="575" y="22" text-anchor="middle">&#10003; 三层通常就够了</text>
+  <rect class="bx-b" x="420" y="56" width="310" height="44" rx="6"/>
+  <text class="lbl on-b" x="434" y="76">应用服务层（控制器）</text><text class="sm" x="434" y="92">外部客户端的入口，负责协调</text>
+  <rect class="bx-a" x="420" y="108" width="310" height="44" rx="6"/>
+  <text class="lbl on-a" x="434" y="128">领域层</text><text class="sm" x="434" y="144">领域逻辑</text>
+  <rect class="bx" x="420" y="160" width="310" height="44" rx="6"/>
+  <text class="lbl" x="434" y="180">基础设施层</text><text class="sm" x="434" y="196">仓储、ORM 映射、SMTP 网关等</text>
+  <rect x="640" y="50" width="34" height="160" rx="8" style="fill:var(--accent-bg);stroke:var(--accent);stroke-width:1.5;fill-opacity:.7"/>
+  <rect x="686" y="50" width="34" height="160" rx="8" style="fill:var(--blue-bg);stroke:var(--blue);stroke-width:1.5;fill-opacity:.7"/>
+  <text class="sm" x="575" y="254" text-anchor="middle">「计算机科学里的所有问题都可以通过增加一层间接来解决，</text>
+  <text class="sm" x="575" y="270" text-anchor="middle">除了间接层太多这个问题。」—— David Wheeler</text>
+</svg>
+<figcaption>图 8-8　层数越多，一个功能被切得越碎</figcaption>
+</figure>
+
+<p>
+  间接层太多会损害你推理代码的能力：每个功能在每一层都有一小块，你得费力把它们拼成完整的图景。
+  它对测试也没好处：这类代码库里控制器和领域模型的边界往往不清晰，而且大家会倾向于<strong>逐层单独验证</strong> ——
+  结果是一大堆低价值的集成测试，每个只跑某一层的代码，把下面的层全 Mock 掉。防止回归不足，抵抗重构也差。
+</p>
+
+<h3>③ 消除循环依赖</h3>
+
+<div class="term">
+  <b class="w">循环依赖（circular dependency）</b>
+  <p>两个或多个类直接或间接地互相依赖才能正常工作。典型例子是<strong>回调</strong>。</p>
+</div>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// ✗ 循环依赖：A 创建 B 并把自己传给 B，B 做完后回头调 A
+public class CheckOutService {
+    public void checkOut(int orderId) {
+        var service = new ReportGenerationService();
+        service.generateReport(orderId, this);
+        /* 其他代码 */
+    }
+}
+
+public class ReportGenerationService {
+    public void generateReport(int orderId, CheckOutService checkOutService) {
+        /* 生成完成后回调 checkOutService */
+    }
+}
+
+// ✓ 打破循环：让 B 把结果作为普通的值返回
+public class CheckOutService {
+    public void checkOut(int orderId) {
+        var service = new ReportGenerationService();
+        Report report = service.generateReport(orderId);
+        /* 其他工作 */
+    }
+}
+
+public class ReportGenerationService {
+    public Report generateReport(int orderId) {
+        /* ... */
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# ✗ 循环依赖：A 创建 B 并把自己传给 B，B 做完后回头调 A
+class CheckOutService:
+    def check_out(self, order_id: int) -&gt; None:
+        service = ReportGenerationService()
+        service.generate_report(order_id, self)
+        ...  # 其他代码
+
+
+class ReportGenerationService:
+    def generate_report(self, order_id: int, check_out_service: CheckOutService) -&gt; None:
+        ...  # 生成完成后回调 check_out_service
+
+
+# ✓ 打破循环：让 B 把结果作为普通的值返回
+class CheckOutService:
+    def check_out(self, order_id: int) -&gt; None:
+        service = ReportGenerationService()
+        report = service.generate_report(order_id)
+        ...  # 其他工作
+
+
+class ReportGenerationService:
+    def generate_report(self, order_id: int) -&gt; Report:
+        ...
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// ✗ 循环依赖：A 创建 B 并把自己传给 B，B 做完后回头调 A
+export class CheckOutService {
+  checkOut(orderId: number): void {
+    const service = new ReportGenerationService()
+    service.generateReport(orderId, this)
+    /* 其他代码 */
+  }
+}
+
+export class ReportGenerationService {
+  generateReport(orderId: number, checkOutService: CheckOutService): void {
+    /* 生成完成后回调 checkOutService */
+  }
+}
+
+// ✓ 打破循环：让 B 把结果作为普通的值返回
+export class CheckOutService {
+  checkOut(orderId: number): void {
+    const service = new ReportGenerationService()
+    const report = service.generateReport(orderId)
+    /* 其他工作 */
+  }
+}
+
+export class ReportGenerationService {
+  generateReport(orderId: number): Report {
+    /* ... */
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应仓库 <code>code/Book/Chapter8/Circular/Circular.cs</code> 与 <code>NonCircular/NonCircular.cs</code></p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="循环依赖的三种形态：直接循环；引入接口后编译期没有循环但运行时依然存在；让被调用者返回值则彻底消除循环">
+  <text class="ttl on-r" x="125" y="22" text-anchor="middle">&#10007; 循环</text>
+  <rect class="bx" x="40" y="40" width="170" height="36" rx="8"/><text class="sm" x="125" y="63" text-anchor="middle">CheckOutService</text>
+  <rect class="bx" x="40" y="126" width="170" height="36" rx="8"/><text class="sm" x="125" y="149" text-anchor="middle">ReportGenerationService</text>
+  <path class="ln-r" d="M95 78 V122" marker-end="url(#ar-r)"/>
+  <path class="ln-r" d="M155 124 V80" marker-end="url(#ar-r)"/>
+  <text class="sm" x="125" y="186" text-anchor="middle">没有清晰的起点，得一次读懂整张图</text>
+
+  <text class="ttl on-a" x="380" y="22" text-anchor="middle">~ 加接口：只是掩盖</text>
+  <rect class="bx" x="270" y="40" width="130" height="36" rx="8"/><text class="sm" x="335" y="63" text-anchor="middle">CheckOutService</text>
+  <rect class="bx-d" x="420" y="40" width="130" height="36" rx="8"/><text class="sm" x="485" y="63" text-anchor="middle">ICheckOutService</text>
+  <rect class="bx" x="295" y="126" width="170" height="36" rx="8"/><text class="sm" x="380" y="149" text-anchor="middle">ReportGenerationService</text>
+  <path class="ln" d="M402 58 H416" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M335 78 V122" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M440 124 L480 80" marker-end="url(#ar-a)"/>
+  <text class="sm" x="395" y="186" text-anchor="middle">编译期没环了，运行时还在；还多了个接口</text>
+
+  <text class="ttl on-g" x="650" y="22" text-anchor="middle">&#10003; 返回值：真的没了</text>
+  <rect class="bx" x="570" y="40" width="170" height="36" rx="8"/><text class="sm" x="655" y="63" text-anchor="middle">CheckOutService</text>
+  <rect class="bx" x="570" y="126" width="170" height="36" rx="8"/><text class="sm" x="655" y="149" text-anchor="middle">ReportGenerationService</text>
+  <path class="ln-g" d="M625 78 V122" marker-end="url(#ar-g)"/>
+  <path class="ln-d" d="M685 124 V80" marker-end="url(#ar)"/>
+  <text class="sm" x="694" y="106">Report（值）</text>
+  <text class="sm" x="655" y="186" text-anchor="middle">依赖只有一个方向</text>
+</svg>
+<figcaption>图 8-9　用接口只能在编译期隐藏循环；让被调用方返回一个值才是真正消除它</figcaption>
+</figure>
+
+<p>
+  循环依赖同样给读代码带来巨大的认知负担，也妨碍测试 —— 你往往不得不借助接口和 Mock 才能把类图拆开、隔离出一个行为单元，
+  而这在测试领域模型时是大忌。很少有代码库能消除所有循环依赖，但至少可以让剩下的那些互相依赖的类簇尽可能小。
+</p>
+
+<h3>④ 在一个测试里用多个执行段？</h3>
+
+<p>
+  第 3 章说过，多个执行段是坏味道。比如把「注册用户」和「删除用户」放进同一个集成测试 ——
+  很诱人，因为第一步的执行正好是第二步的准备。但这样的测试会失去焦点、迅速膨胀。<strong>最好拆开。</strong>
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 唯一的例外</div>
+  <p>
+    测试涉及<strong>很难摆到期望状态</strong>的进程外依赖时。例如注册用户会在外部银行系统里开户，银行给了你一个沙箱，但沙箱很慢，或者限制调用次数。
+    这时把多个执行动作合并到一个测试里、减少与它的交互次数，是划算的。
+  </p>
+  <p>
+    所以：单元测试<strong>永远不该</strong>有多个执行段（它们不碰进程外依赖）；集成测试也很少需要；多步骤的测试几乎都属于端到端测试。
+  </p>
+</div>
+
+<h2 id="logging">日志该怎么测</h2>
+
+<p>日志是个灰色地带。把问题拆成四个：该不该测？怎么测？打多少日志合适？日志器怎么传递？</p>
+
+<h3>该不该测日志</h3>
+
+<p>
+  归根结底还是那个问题：<strong>日志是应用的可观察行为，还是实现细节？</strong>
+  日志最终会在进程外依赖（文本文件、数据库）里产生副作用。这些副作用如果是给客户、应用的使用方或开发者以外的任何人看的，那就是可观察行为，必须测；
+  如果读者只有开发者自己，那就是可以随意修改的实现细节，不该测。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="两种日志：支持日志给支持人员和系统管理员看，是业务需求，需要测试；诊断日志只给开发者看，是实现细节，不测">
+  <rect class="bx" x="270" y="14" width="220" height="38" rx="19"/>
+  <text class="ttl" x="380" y="38" text-anchor="middle">这条日志是给谁看的？</text>
+  <path class="ln-g" d="M330 54 L210 82" marker-end="url(#ar-g)"/>
+  <path class="ln" d="M430 54 L550 82" marker-end="url(#ar)"/>
+
+  <rect class="bx-g" x="20" y="86" width="350" height="110" rx="12"/>
+  <text class="ttl on-g" x="36" y="112">支持日志（support logging）</text>
+  <text class="lbl" x="36" y="136">给<tspan font-weight="700">支持人员、系统管理员</tspan>追踪用</text>
+  <text class="sm" x="36" y="158">是业务需求 &rarr; 属于可观察行为</text>
+  <text class="sm on-g" x="36" y="180">&#10003; 要测（用 Mock 验证）</text>
+
+  <rect class="bx" x="390" y="86" width="350" height="110" rx="12"/>
+  <text class="ttl" x="406" y="112">诊断日志（diagnostic logging）</text>
+  <text class="lbl" x="406" y="136">帮<tspan font-weight="700">开发者</tspan>了解应用内部在发生什么</text>
+  <text class="sm" x="406" y="158">可以随意增删 &rarr; 属于实现细节</text>
+  <text class="sm" x="406" y="180">&#10007; 不测</text>
+</svg>
+<figcaption>图 8-10　Freeman 和 Pryce 对日志的二分法</figcaption>
+</figure>
+
+<h3>怎么测支持日志</h3>
+
+<p>
+  日志涉及进程外依赖，所以规则和其他涉及进程外依赖的功能一样：<strong>用 Mock 验证应用与日志存储的交互。</strong>
+  但别直接 Mock 通用的 <code>ILogger</code>。支持日志是业务需求，就在代码里<strong>明确地把这个需求表达出来</strong>：
+  建一个专门的 <code>DomainLogger</code>，把业务要求的每一种支持日志都列成一个方法。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public interface IDomainLogger {
+    void userTypeHasChanged(int userId, UserType oldType, UserType newType);
+}
+
+public class DomainLogger implements IDomainLogger {
+    private final ILogger logger;
+
+    public DomainLogger(ILogger logger) { this.logger = logger; }
+
+    @Override
+    public void userTypeHasChanged(int userId, UserType oldType, UserType newType) {
+        logger.info("User " + userId + " changed type from " + oldType + " to " + newType);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class DomainLogger:
+    def __init__(self, logger: logging.Logger) -&gt; None:
+        self._logger = logger
+
+    def user_type_has_changed(self, user_id: int, old_type: UserType,
+                              new_type: UserType) -&gt; None:
+        self._logger.info(
+            "User %s changed type from %s to %s", user_id, old_type, new_type)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export interface IDomainLogger {
+  userTypeHasChanged(userId: number, oldType: UserType, newType: UserType): void
+}
+
+export class DomainLogger implements IDomainLogger {
+  constructor(private readonly logger: ILogger) {}
+
+  userTypeHasChanged(userId: number, oldType: UserType, newType: UserType): void {
+    this.logger.info(`User ${userId} changed type from ${oldType} to ${newType}`)
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 8.5 · 仓库 <code>code/Book/Chapter8/Logging/V1.cs</code></p>
+
+<div class="box deep">
+  <div class="t">&#128300; 结构化日志</div>
+  <p>
+    <code>DomainLogger</code> 的思路和<strong>结构化日志</strong>很像。传统日志先拼字符串再写入：<code>logger.info("User Id is " + 12)</code>，
+    得到的日志文件缺乏结构，很难分析（比如「某类消息有多少条、其中多少和某个用户有关」）。
+  </p>
+  <p>
+    结构化日志把「<strong>捕获</strong>日志数据」和「<strong>渲染</strong>这些数据」解耦：<code>logger.info("User Id is {UserId}", 12)</code>
+    会把消息模板和参数作为数据保存下来，再按配置渲染成纯文本、JSON 或 CSV。
+    可以把 <code>userTypeHasChanged()</code> 这个方法名看作消息模板，它的三个参数就是日志数据。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 190" role="img" aria-label="结构化日志：一次日志调用被捕获为模板和参数组成的数据，再渲染成纯文本、JSON 或 CSV 等多种形式">
+  <rect class="bx" x="20" y="64" width="220" height="50" rx="8"/>
+  <text class="mono sm" x="130" y="86" text-anchor="middle">logger.info(</text>
+  <text class="mono sm" x="130" y="102" text-anchor="middle">"User Id is {UserId}", 12)</text>
+  <path class="ln" d="M242 89 H276" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="280" y="44" width="210" height="90" rx="10"/>
+  <text class="ttl on-a" x="385" y="66" text-anchor="middle">日志数据（捕获）</text>
+  <text class="mono sm" x="294" y="90">模板: User Id is {UserId}</text>
+  <text class="mono sm" x="294" y="110">UserId: 12</text>
+  <path class="ln" d="M492 68 L546 38" marker-end="url(#ar)"/>
+  <path class="ln" d="M492 89 H546" marker-end="url(#ar)"/>
+  <path class="ln" d="M492 110 L546 142" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="550" y="14" width="190" height="40" rx="8"/><text class="sm on-b" x="562" y="30">纯文本</text><text class="mono sm" x="562" y="46">User Id is 12</text>
+  <rect class="bx-b" x="550" y="68" width="190" height="42" rx="8"/><text class="sm on-b" x="562" y="84">JSON</text><text class="mono sm" x="562" y="100">{"UserId": 12, …}</text>
+  <rect class="bx-b" x="550" y="124" width="190" height="42" rx="8"/><text class="sm on-b" x="562" y="140">CSV</text><text class="mono sm" x="562" y="156">User Id is {UserId},12</text>
+  <text class="sm" x="645" y="184" text-anchor="middle">渲染（可以同时配多种）</text>
+</svg>
+<figcaption>图 8-11　结构化日志把「记什么」和「怎么呈现」分开</figcaption>
+</figure>
+
+<p>
+  不过有个问题：<code>DomainLogger</code> 代表一个进程外依赖（日志存储）。如果让 <code>User</code> 直接调用它，
+  领域模型就又和进程外依赖扯上了，<code>User</code> 会滑回<strong>过度复杂</strong>象限。
+  解决办法和第 7 章通知外部系统时一样 —— <strong>领域事件</strong>：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// User
+public void changeEmail(String newEmail, Company company) {
+    logger.info("Changing email for user " + userId + " to " + newEmail);   // 诊断日志
+
+    Precondition.requires(canChangeEmail() == null);
+
+    if (email.equals(newEmail)) return;
+
+    UserType newType = company.isEmailCorporate(newEmail)
+        ? UserType.EMPLOYEE : UserType.CUSTOMER;
+
+    if (type != newType) {
+        int delta = newType == UserType.EMPLOYEE ? 1 : -1;
+        company.changeNumberOfEmployees(delta);
+        addDomainEvent(new UserTypeChangedEvent(userId, type, newType));    // 用领域事件代替 DomainLogger
+    }
+
+    email = newEmail;
+    type = newType;
+    addDomainEvent(new EmailChangedEvent(userId, newEmail));
+
+    logger.info("Email is changed for user " + userId);                     // 诊断日志
+}
+
+// UserController
+public String changeEmail(int userId, String newEmail) {
+    /* 读取 user、检查 canChangeEmail、读取 company —— 同前 */
+
+    user.changeEmail(newEmail, company);
+
+    database.saveCompany(company);
+    database.saveUser(user);
+    eventDispatcher.dispatch(user.getDomainEvents());                       // 统一分发领域事件
+
+    return "OK";
+}
+
+// EventDispatcher：把领域事件翻译成对进程外依赖的调用
+public void dispatch(List&lt;IDomainEvent&gt; events) {
+    for (IDomainEvent ev : events) {
+        if (ev instanceof EmailChangedEvent e) {
+            messageBus.sendEmailChangedMessage(e.userId(), e.newEmail());
+        } else if (ev instanceof UserTypeChangedEvent e) {
+            domainLogger.userTypeHasChanged(e.userId(), e.oldType(), e.newType());
+        }
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# User
+def change_email(self, new_email: str, company: Company) -&gt; None:
+    logger.info("Changing email for user %s to %s", self.user_id, new_email)   # 诊断日志
+
+    Precondition.requires(self.can_change_email() is None)
+
+    if self.email == new_email:
+        return
+
+    new_type = (UserType.EMPLOYEE if company.is_email_corporate(new_email)
+                else UserType.CUSTOMER)
+
+    if self.type != new_type:
+        delta = 1 if new_type == UserType.EMPLOYEE else -1
+        company.change_number_of_employees(delta)
+        self.add_domain_event(                                # 用领域事件代替 DomainLogger
+            UserTypeChangedEvent(self.user_id, self.type, new_type))
+
+    self.email = new_email
+    self.type = new_type
+    self.add_domain_event(EmailChangedEvent(self.user_id, new_email))
+
+    logger.info("Email is changed for user %s", self.user_id)                  # 诊断日志
+
+
+# UserController
+def change_email(self, user_id: int, new_email: str) -&gt; str:
+    ...  # 读取 user、检查 can_change_email、读取 company —— 同前
+
+    user.change_email(new_email, company)
+
+    self._database.save_company(company)
+    self._database.save_user(user)
+    self._event_dispatcher.dispatch(user.domain_events)       # 统一分发领域事件
+
+    return "OK"
+
+
+# EventDispatcher：把领域事件翻译成对进程外依赖的调用
+def dispatch(self, events: list[DomainEvent]) -&gt; None:
+    for ev in events:
+        match ev:
+            case EmailChangedEvent():
+                self._message_bus.send_email_changed_message(ev.user_id, ev.new_email)
+            case UserTypeChangedEvent():
+                self._domain_logger.user_type_has_changed(
+                    ev.user_id, ev.old_type, ev.new_type)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// User
+changeEmail(newEmail: string, company: Company): void {
+  logger.info(`Changing email for user ${this.userId} to ${newEmail}`)   // 诊断日志
+
+  Precondition.requires(this.canChangeEmail() === null)
+
+  if (this.email === newEmail) return
+
+  const newType = company.isEmailCorporate(newEmail)
+    ? UserType.Employee : UserType.Customer
+
+  if (this.type !== newType) {
+    const delta = newType === UserType.Employee ? 1 : -1
+    company.changeNumberOfEmployees(delta)
+    this.addDomainEvent({                                    // 用领域事件代替 DomainLogger
+      kind: 'UserTypeChanged', userId: this.userId, oldType: this.type, newType })
+  }
+
+  this.email = newEmail
+  this.type = newType
+  this.addDomainEvent({ kind: 'EmailChanged', userId: this.userId, newEmail })
+
+  logger.info(`Email is changed for user ${this.userId}`)                // 诊断日志
+}
+
+// UserController
+changeEmail(userId: number, newEmail: string): string {
+  /* 读取 user、检查 canChangeEmail、读取 company —— 同前 */
+
+  user.changeEmail(newEmail, company)
+
+  this.database.saveCompany(company)
+  this.database.saveUser(user)
+  this.eventDispatcher.dispatch(user.domainEvents)           // 统一分发领域事件
+
+  return 'OK'
+}
+
+// EventDispatcher：把领域事件翻译成对进程外依赖的调用
+dispatch(events: DomainEvent[]): void {
+  for (const ev of events) {
+    switch (ev.kind) {
+      case 'EmailChanged':
+        this.messageBus.sendEmailChangedMessage(ev.userId, ev.newEmail)
+        break
+      case 'UserTypeChanged':
+        this.domainLogger.userTypeHasChanged(ev.userId, ev.oldType, ev.newType)
+        break
+    }
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 8.6 / 8.7 · 仓库 <code>code/Book/Chapter8/LoggingV2/LoggingV2.cs</code></p>
+
+<p>现在测试支持日志和测试消息总线（另一个不受管依赖）没有任何区别：</p>
+<ul>
+  <li><strong>单元测试</strong>检查被测的 <code>User</code> 里出现了 <code>UserTypeChangedEvent</code>。</li>
+  <li><strong>那一个集成测试</strong>用 Mock 确认与 <code>DomainLogger</code> 的交互确实发生了。</li>
+</ul>
+
+<div class="box note">
+  <div class="t">&#9432; 两点补充</div>
+  <p>
+    如果支持日志是在<strong>控制器</strong>里打的（而不是领域类里），就不需要领域事件 —— 控制器本来就负责和进程外依赖打交道，直接用 <code>DomainLogger</code> 即可。
+  </p>
+  <p>
+    <code>User</code> 里的<strong>诊断日志</strong>没有改，仍然直接用 logger。这是故意的：诊断日志只给开发者看，不需要测，也就不必把它赶出领域模型。
+  </p>
+</div>
+
+<h3>打多少日志合适</h3>
+
+<p>支持日志是业务需求，没得选。你能控制的是<strong>诊断日志</strong>，而它不宜滥用：</p>
+<ul>
+  <li><strong>过多的日志让代码变得杂乱</strong>，在领域模型里尤其如此。</li>
+  <li><strong>日志的信噪比是关键。</strong>记得越多，越难找到有用的信息。</li>
+</ul>
+<p>
+  尽量<strong>完全不在领域模型里用诊断日志</strong>，多数情况下可以把它从领域类挪到控制器里。即便如此，也只在需要调试时临时使用，调完就删。
+  理想情况下，诊断日志只用于<strong>未处理的异常</strong>。
+</p>
+
+<h3>日志器怎么传递</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// ✗ 环境上下文（ambient context）：通过静态方法获取，存在静态字段里
+public class User {
+    private static final Logger logger = LoggerFactory.getLogger(User.class);
+
+    public void changeEmail(String newEmail, Company company) {
+        logger.info("Changing email for user {} to {}", userId, newEmail);
+        /* ... */
+    }
+}
+
+// ✓ 显式注入：作为方法参数（也可以通过构造函数）
+public void changeEmail(String newEmail, Company company, ILogger logger) {
+    logger.info("Changing email for user " + userId + " to " + newEmail);
+    /* ... */
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# ✗ 环境上下文（ambient context）：模块级全局 logger
+logger = logging.getLogger(__name__)
+
+
+class User:
+    def change_email(self, new_email: str, company: Company) -&gt; None:
+        logger.info("Changing email for user %s to %s", self.user_id, new_email)
+        ...
+
+
+# ✓ 显式注入：作为方法参数（也可以通过构造函数）
+class User:
+    def change_email(self, new_email: str, company: Company,
+                     logger: logging.Logger) -&gt; None:
+        logger.info("Changing email for user %s to %s", self.user_id, new_email)
+        ...
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// ✗ 环境上下文（ambient context）：模块级全局 logger
+const logger = LogManager.getLogger('User')
+
+export class User {
+  changeEmail(newEmail: string, company: Company): void {
+    logger.info(`Changing email for user ${this.userId} to ${newEmail}`)
+    /* ... */
+  }
+}
+
+// ✓ 显式注入：作为方法参数（也可以通过构造函数）
+changeEmail(newEmail: string, company: Company, logger: ILogger): void {
+  logger.info(`Changing email for user ${this.userId} to ${newEmail}`)
+  /* ... */
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 8.8 / 8.9</p>
+
+<p>
+  通过静态方法 / 全局变量获取依赖的方式叫<strong>环境上下文</strong>，这是反模式：依赖是隐藏的、难以替换，测试也更困难。
+  但作者认为它最大的坏处是<strong>掩盖了代码里潜在的问题</strong>：如果把 logger 显式注入领域类变得麻烦到你只好用环境上下文，
+  那说明要么日志打得太多，要么间接层太多。环境上下文不是解药，要去解决根本原因。
+</p>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>集成测试是任何「不是单元测试」的测试，验证系统与进程外依赖的集成。它覆盖控制器；单元测试覆盖算法和领域模型。</li>
+  <li>集成测试在防止回归和抵抗重构上更好，单元测试在可维护性和反馈速度上更好。所以大部分测试应是单元测试，外加少量集成测试。</li>
+  <li>用单元测试覆盖尽可能多的边界情况；用集成测试覆盖一条（最长的）快乐路径，以及单元测试覆盖不了的边界情况。</li>
+  <li><strong>快速失败原则</strong>让 Bug 尽早暴露，是集成测试的一个可行替代。</li>
+  <li><strong>受管依赖</strong>只能通过你的应用访问（如应用数据库），与它的通信是实现细节 &rarr; <strong>用真实实例</strong>。<strong>不受管依赖</strong>对其他应用可见（如 SMTP、消息总线），与它的通信是可观察行为 &rarr; <strong>用 Mock</strong>。</li>
+  <li>共享数据库：对外可见的部分当作不受管依赖，其余当作受管依赖。</li>
+  <li>集成测试必须穿过所有与受管依赖打交道的层：断言时独立于输入数据，重新查一遍数据库。</li>
+  <li>只有一个实现的接口不是抽象，也不比具体类更松耦合；为未来假想的实现而设计违反 YAGNI。用这种接口的唯一正当理由是<strong>为了 Mock</strong>，所以只给不受管依赖用。给领域类配接口是危险信号。</li>
+  <li>给领域模型一个明确的位置；间接层越少越好（通常三层就够）；消除循环依赖（让被调用方返回值）。</li>
+  <li>测试里的多个执行段只在涉及难以摆布的进程外依赖时才合理，这几乎总是端到端测试。</li>
+  <li><strong>支持日志</strong>是可观察行为，要测：引入 <code>DomainLogger</code> 明确列出业务要求的日志，用领域事件追踪，在控制器里转成对 <code>DomainLogger</code> 的调用。<strong>诊断日志</strong>是实现细节，不测，而且要少用。</li>
+  <li>所有依赖（包括 logger）都应该显式注入，不要用环境上下文。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>你的服务用到了：自己的 PostgreSQL、公司统一的 Kafka、一个只有你的服务读写的 Redis 缓存、第三方支付 API。集成测试里各该怎么处理？</summary>
+  <p>自己的 PostgreSQL 和只有自己用的 Redis 是受管依赖 &rarr; 用真实实例，验证最终状态。Kafka 和支付 API 是不受管依赖 &rarr; 用 Mock，验证交互。</p>
+</details>
+<details class="quiz">
+  <summary>同事说：「我们的测试环境连不上数据库，所以我把 Repository 全 Mock 了，照样写了 200 个集成测试。」有什么问题？</summary>
+  <p>Mock 受管依赖让这些测试既脆弱（和仓储的调用方式耦合）又没多少保护作用 —— 它们只是在确认控制器调了哪些仓储方法。如果确实用不了真数据库，更好的选择是不写这些集成测试，把精力放在领域模型的单元测试上。</p>
+</details>
+<details class="quiz">
+  <summary>运营团队要求「每次用户被封禁都必须记一条日志，他们要据此对账」。这条日志该测吗？怎么测？</summary>
+  <p>该测。它是支持日志，是业务需求，属于可观察行为。在 <code>DomainLogger</code> 里加一个 <code>userHasBeenBanned(...)</code> 方法；领域模型产生一个 <code>UserBannedEvent</code>（单元测试检查事件），控制器把事件转成对 <code>DomainLogger</code> 的调用（集成测试用 Mock 验证）。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>给第 7 章你实现的 CRM 接上一个真实数据库（SQLite 文件、或用 Docker 起一个 PostgreSQL 都行），写出本章的集成测试并跑通。</li>
+    <li>列出你当前项目的所有进程外依赖，逐个标注：受管 / 不受管？现在的测试是用真的还是 Mock？和本章的建议一致吗？</li>
+    <li>在项目里搜索所有「只有一个实现的接口」。它们中有多少是为了 Mock 不受管依赖而存在的？剩下的呢？</li>
+    <li>找一处循环依赖（回调、互相持有引用），试着改成「被调用方返回一个值」。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

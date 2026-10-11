@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 9 章 · Mock 最佳实践 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="9">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 9 章</span>
+<h1>Mock 最佳实践</h1>
+<p class="lede">
+  「Mock 只用于不受管依赖」—— 守住这一条，你已经走完了三分之二的路。
+  这一章讲剩下的三分之一：Mock 该打在调用链的哪个位置、为什么手写的 Spy 有时比框架生成的 Mock 更好，以及另外几条让 Mock 物尽其用的规矩。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>在<strong>系统的最边缘</strong>验证与不受管依赖的交互</li>
+    <li>用 <strong>Spy</strong>（手写的 Mock）让断言更简洁，并让测试成为独立的「审计员」</li>
+    <li>记住五条 Mock 最佳实践</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="recap">回顾：我们停在哪里</h2>
+
+<p>CRM 的控制器现在把领域事件交给 <code>EventDispatcher</code>，由它转成对两个不受管依赖的调用：消息总线和领域日志。</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class UserController {
+    private final Database database;
+    private final EventDispatcher eventDispatcher;
+
+    public UserController(Database database, IMessageBus messageBus, IDomainLogger domainLogger) {
+        this.database = database;
+        this.eventDispatcher = new EventDispatcher(messageBus, domainLogger);
+    }
+
+    public String changeEmail(int userId, String newEmail) {
+        Object[] userData = database.getUserById(userId);
+        User user = UserFactory.create(userData);
+
+        String error = user.canChangeEmail();
+        if (error != null) return error;
+
+        Object[] companyData = database.getCompany();
+        Company company = CompanyFactory.create(companyData);
+
+        user.changeEmail(newEmail, company);
+
+        database.saveCompany(company);
+        database.saveUser(user);
+        eventDispatcher.dispatch(user.getDomainEvents());
+
+        return "OK";
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class UserController:
+    def __init__(self, database: Database, message_bus: MessageBus,
+                 domain_logger: DomainLogger) -&gt; None:
+        self._database = database
+        self._event_dispatcher = EventDispatcher(message_bus, domain_logger)
+
+    def change_email(self, user_id: int, new_email: str) -&gt; str:
+        user_data = self._database.get_user_by_id(user_id)
+        user = UserFactory.create(user_data)
+
+        error = user.can_change_email()
+        if error is not None:
+            return error
+
+        company_data = self._database.get_company()
+        company = CompanyFactory.create(company_data)
+
+        user.change_email(new_email, company)
+
+        self._database.save_company(company)
+        self._database.save_user(user)
+        self._event_dispatcher.dispatch(user.domain_events)
+
+        return "OK"
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class UserController {
+  private readonly eventDispatcher: EventDispatcher
+
+  constructor(
+    private readonly database: Database,
+    messageBus: IMessageBus,
+    domainLogger: IDomainLogger,
+  ) {
+    this.eventDispatcher = new EventDispatcher(messageBus, domainLogger)
+  }
+
+  changeEmail(userId: number, newEmail: string): string {
+    const userData = this.database.getUserById(userId)
+    const user = UserFactory.create(userData)
+
+    const error = user.canChangeEmail()
+    if (error !== null) return error
+
+    const companyData = this.database.getCompany()
+    const company = CompanyFactory.create(companyData)
+
+    user.changeEmail(newEmail, company)
+
+    this.database.saveCompany(company)
+    this.database.saveUser(user)
+    this.eventDispatcher.dispatch(user.domainEvents)
+
+    return 'OK'
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 9.1 · 仓库 <code>code/Book/Chapter9/V1/V1.cs</code></p>
+
+<p>
+  集成测试里 Mock 了两个不受管依赖：<code>IMessageBus</code> 和 <code>IDomainLogger</code>，并验证了
+  <code>sendEmailChangedMessage(userId, "new@gmail.com")</code> 和 <code>userTypeHasChanged(...)</code> 各被调用一次。
+  看着没毛病，但其实还能更好。
+</p>
+
+<h2 id="edges">在系统的边缘验证交互</h2>
+
+<div class="box key">
+  <div class="t">&#9733; 准则</div>
+  <p>使用 Mock 时，始终在<strong>系统的最边缘</strong>验证与不受管依赖的交互。</p>
+</div>
+
+<p><code>IMessageBus</code> 的问题在于：它并不在系统边缘。看它的实现：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public interface IMessageBus {
+    void sendEmailChangedMessage(int userId, String newEmail);
+}
+
+public class MessageBus implements IMessageBus {
+    private final IBus bus;
+
+    public MessageBus(IBus bus) { this.bus = bus; }
+
+    @Override
+    public void sendEmailChangedMessage(int userId, String newEmail) {
+        bus.send("Type: USER EMAIL CHANGED; " +
+                 "Id: " + userId + "; " +
+                 "NewEmail: " + newEmail);
+    }
+}
+
+public interface IBus {
+    void send(String message);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class Bus(Protocol):
+    def send(self, message: str) -&gt; None: ...
+
+
+class MessageBus:
+    def __init__(self, bus: Bus) -&gt; None:
+        self._bus = bus
+
+    def send_email_changed_message(self, user_id: int, new_email: str) -&gt; None:
+        self._bus.send(
+            "Type: USER EMAIL CHANGED; "
+            f"Id: {user_id}; "
+            f"NewEmail: {new_email}")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export interface IMessageBus {
+  sendEmailChangedMessage(userId: number, newEmail: string): void
+}
+
+export class MessageBus implements IMessageBus {
+  constructor(private readonly bus: IBus) {}
+
+  sendEmailChangedMessage(userId: number, newEmail: string): void {
+    this.bus.send(
+      'Type: USER EMAIL CHANGED; ' +
+      `Id: ${userId}; ` +
+      `NewEmail: ${newEmail}`)
+  }
+}
+
+export interface IBus {
+  send(message: string): void
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 9.4</p>
+
+<p>这里有两层包装，职责不同，最好分开：</p>
+<ul>
+  <li><code>IBus</code>：包在消息总线厂商的 SDK 外面，隐藏连接凭据之类的技术细节，只暴露一个干净的「发送任意文本消息」的接口。</li>
+  <li><code>IMessageBus</code>：包在 <code>IBus</code> 外面，定义<strong>你的领域</strong>里有哪些消息，把它们集中在一处、方便复用。</li>
+</ul>
+<p>（这和第 8 章 <code>ILogger</code> 与 <code>IDomainLogger</code> 的关系一模一样。）</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="从控制器到真实消息总线的调用链：控制器、EventDispatcher、MessageBus、IBus。IBus 是离开应用前的最后一环，位于系统边缘。Mock 应该打在 IBus 上，这样测试能走过链条上更多的代码">
+  <rect class="bx" x="14" y="100" width="110" height="50" rx="8"/><text class="lbl" x="69" y="130" text-anchor="middle">控制器</text>
+  <rect class="bx" x="154" y="100" width="130" height="50" rx="8"/><text class="lbl" x="219" y="130" text-anchor="middle">EventDispatcher</text>
+  <rect class="bx" x="314" y="100" width="120" height="50" rx="8"/><text class="lbl" x="374" y="122" text-anchor="middle">MessageBus</text><text class="sm" x="374" y="140" text-anchor="middle">领域消息</text>
+  <rect class="bx-a" x="464" y="100" width="100" height="50" rx="8"/><text class="lbl on-a" x="514" y="122" text-anchor="middle">IBus</text><text class="sm" x="514" y="140" text-anchor="middle">SDK 包装</text>
+  <rect class="bx-b" x="630" y="100" width="116" height="50" rx="8"/><text class="lbl on-b" x="688" y="122" text-anchor="middle">真实消息总线</text><text class="sm" x="688" y="140" text-anchor="middle">外部系统在听</text>
+  <path class="ln" d="M126 125 H150" marker-end="url(#ar)"/>
+  <path class="ln" d="M286 125 H310" marker-end="url(#ar)"/>
+  <path class="ln" d="M436 125 H460" marker-end="url(#ar)"/>
+  <path class="ln-b" style="stroke-width:2.2" d="M566 125 H626" marker-end="url(#ar-b)"/>
+
+  <path class="ln-a" d="M597 30 V230" style="stroke-dasharray:6 4"/>
+  <text class="sm on-a" x="597" y="22" text-anchor="middle">应用的边界</text>
+
+  <path class="ln-r" d="M374 60 V96" marker-end="url(#ar-r)" style="stroke-dasharray:4 3"/>
+  <rect class="bx-r" x="264" y="24" width="220" height="36" rx="8"/>
+  <text class="sm on-r" x="374" y="46" text-anchor="middle">&#10007; 在这里 Mock：链条的后半截没被测到</text>
+
+  <path class="ln-g" d="M514 190 V154" marker-end="url(#ar-g)"/>
+  <rect class="bx-g" x="350" y="192" width="250" height="52" rx="8"/>
+  <text class="lbl on-g" x="475" y="214" text-anchor="middle">&#10003; 在这里 Mock：最后一环</text>
+  <text class="sm" x="475" y="232" text-anchor="middle">验证的是真正发出去的那段文本</text>
+
+  <path d="M14 270 H564" style="stroke:var(--green);stroke-width:5;stroke-linecap:round"/>
+  <text class="sm on-g" x="290" y="290" text-anchor="middle">Mock 打在 IBus 上时，集成测试实际执行到的代码范围</text>
+</svg>
+<figcaption>图 9-1　IBus 在系统边缘；IMessageBus 只是中间一环。EventDispatcher 离边缘更远，更不该 Mock</figcaption>
+</figure>
+
+<p>把测试从 <code>IMessageBus</code> 改到 <code>IBus</code>：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void changing_email_from_corporate_to_non_corporate() {
+    /* Arrange 的数据库部分同前 */
+    IBus busMock = mock(IBus.class);
+    var messageBus = new MessageBus(busMock);            // 用具体类，不再用接口
+    IDomainLogger loggerMock = mock(IDomainLogger.class);
+    var sut = new UserController(db, messageBus, loggerMock);
+
+    /* Act 与数据库断言同前 */
+
+    verify(busMock, times(1)).send(                      // 验证真正发到总线上的消息
+        "Type: USER EMAIL CHANGED; " +
+        "Id: " + user.getUserId() + "; " +
+        "NewEmail: new@gmail.com");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_changing_email_from_corporate_to_non_corporate():
+    ...  # Arrange 的数据库部分同前
+    bus_mock = Mock(spec=Bus)
+    message_bus = MessageBus(bus_mock)                   # 用真的 MessageBus
+    logger_mock = Mock(spec=DomainLogger)
+    sut = UserController(db, message_bus, logger_mock)
+
+    ...  # Act 与数据库断言同前
+
+    bus_mock.send.assert_called_once_with(               # 验证真正发到总线上的消息
+        "Type: USER EMAIL CHANGED; "
+        f"Id: {user.user_id}; "
+        "NewEmail: new@gmail.com")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changing email from corporate to non corporate', () =&gt; {
+  /* Arrange 的数据库部分同前 */
+  const busMock: IBus = { send: vi.fn() }
+  const messageBus = new MessageBus(busMock)             // 用具体类，不再用接口
+  const loggerMock: IDomainLogger = { userTypeHasChanged: vi.fn() }
+  const sut = new UserController(db, messageBus, loggerMock)
+
+  /* Act 与数据库断言同前 */
+
+  expect(busMock.send).toHaveBeenCalledOnce()            // 验证真正发到总线上的消息
+  expect(busMock.send).toHaveBeenCalledWith(
+    'Type: USER EMAIL CHANGED; ' +
+    `Id: ${user.userId}; ` +
+    'NewEmail: new@gmail.com')
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 9.5</p>
+
+<p>这一改，两根支柱同时受益：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128737;</span><h4>防止回归 &uarr;</h4>
+    <p>防止回归取决于测试执行的代码量。Mock 打在离不受管依赖最近的那个类型上，集成测试走过的类更多 —— <code>MessageBus</code> 里拼消息的那段代码现在也被测到了。</p></div>
+  <div class="card"><span class="ic">&#128296;</span><h4>抵抗重构 &uarr;</h4>
+    <p>外部系统期待的是<strong>文本消息</strong>，而不是「对 <code>MessageBus</code> 类的一次调用」。文本消息才是唯一对外可见的副作用；参与生成消息的那些类只是实现细节。只要消息结构不变，随你怎么重构，测试都不会红。</p></div>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 顺手删掉一个接口</div>
+  <p>
+    <code>IMessageBus</code> 是只有一个实现的接口，而它存在的唯一正当理由是为了 Mock（第 8 章）。现在不再 Mock 它了，
+    这个接口可以删掉，所有用到它的地方换成具体的 <code>MessageBus</code>。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#128161;</div>
+  <p>
+    对不受管依赖的一次调用在离开你的应用之前会经过好几个阶段。<strong>挑最后一个阶段。</strong>
+    这是保证与外部系统向后兼容的最好办法 —— 而这正是 Mock 要帮你达到的目的。
+  </p>
+</div>
+
+<h2 id="spies">用 Spy 代替 Mock</h2>
+
+<p>
+  第 5 章提过：<strong>Spy</strong> 和 Mock 作用相同，区别只在于 Spy 是手写的，所以也叫「手写的 Mock」。
+  对于位于系统边缘的类，<strong>Spy 比 Mock 更好</strong>：它能让断言阶段的代码得到复用，测试更短、更好读。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="BusSpy.java（测试代码）"><pre>
+public class BusSpy implements IBus {
+    private final List&lt;String&gt; sentMessages = new ArrayList&lt;&gt;();
+
+    @Override
+    public void send(String message) {
+        sentMessages.add(message);                 // 把所有发出的消息存在本地
+    }
+
+    public BusSpy shouldSendNumberOfMessages(int number) {
+        assertThat(sentMessages).hasSize(number);
+        return this;
+    }
+
+    public BusSpy withEmailChangedMessage(int userId, String newEmail) {
+        String message = "Type: USER EMAIL CHANGED; " +
+                         "Id: " + userId + "; " +
+                         "NewEmail: " + newEmail;
+        assertThat(sentMessages).contains(message);   // 断言这条消息确实发出去了
+        return this;
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="bus_spy.py（测试代码）"><pre>
+class BusSpy:
+    def __init__(self) -&gt; None:
+        self._sent_messages: list[str] = []
+
+    def send(self, message: str) -&gt; None:
+        self._sent_messages.append(message)        # 把所有发出的消息存在本地
+
+    def should_send_number_of_messages(self, number: int) -&gt; "BusSpy":
+        assert len(self._sent_messages) == number
+        return self
+
+    def with_email_changed_message(self, user_id: int, new_email: str) -&gt; "BusSpy":
+        message = (
+            "Type: USER EMAIL CHANGED; "
+            f"Id: {user_id}; "
+            f"NewEmail: {new_email}")
+        assert message in self._sent_messages      # 断言这条消息确实发出去了
+        return self
+</pre></div>
+<div class="code" data-lang="ts" data-file="bus-spy.ts（测试代码）"><pre>
+export class BusSpy implements IBus {
+  private readonly sentMessages: string[] = []
+
+  send(message: string): void {
+    this.sentMessages.push(message)                // 把所有发出的消息存在本地
+  }
+
+  shouldSendNumberOfMessages(number: number): this {
+    expect(this.sentMessages).toHaveLength(number)
+    return this
+  }
+
+  withEmailChangedMessage(userId: number, newEmail: string): this {
+    const message =
+      'Type: USER EMAIL CHANGED; ' +
+      `Id: ${userId}; ` +
+      `NewEmail: ${newEmail}`
+    expect(this.sentMessages).toContain(message)   // 断言这条消息确实发出去了
+    return this
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 9.6 · 仓库 <code>code/Book/Chapter9/V2/V2.cs</code></p>
+
+<p>测试里的断言变成了一句话：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void changing_email_from_corporate_to_non_corporate() {
+    var busSpy = new BusSpy();
+    var messageBus = new MessageBus(busSpy);
+    IDomainLogger loggerMock = mock(IDomainLogger.class);
+    var sut = new UserController(db, messageBus, loggerMock);
+
+    /* ... */
+
+    busSpy.shouldSendNumberOfMessages(1)
+          .withEmailChangedMessage(user.getUserId(), "new@gmail.com");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_changing_email_from_corporate_to_non_corporate():
+    bus_spy = BusSpy()
+    message_bus = MessageBus(bus_spy)
+    logger_mock = Mock(spec=DomainLogger)
+    sut = UserController(db, message_bus, logger_mock)
+
+    ...
+
+    (bus_spy.should_send_number_of_messages(1)
+            .with_email_changed_message(user.user_id, "new@gmail.com"))
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changing email from corporate to non corporate', () =&gt; {
+  const busSpy = new BusSpy()
+  const messageBus = new MessageBus(busSpy)
+  const loggerMock: IDomainLogger = { userTypeHasChanged: vi.fn() }
+  const sut = new UserController(db, messageBus, loggerMock)
+
+  /* ... */
+
+  busSpy.shouldSendNumberOfMessages(1)
+        .withEmailChangedMessage(user.userId, 'new@gmail.com')
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 9.7</p>
+
+<div class="box tip">
+  <div class="t">&#128161; 可以改名叫 BusMock</div>
+  <p>Mock 和 Spy 的区别只是实现细节，而很多程序员不熟悉「Spy」这个词。把 <code>BusSpy</code> 叫作 <code>BusMock</code> 可以免去同事的困惑。</p>
+</div>
+
+<h3>这不是绕了一圈又回到原点吗？</h3>
+
+<p>
+  <code>busSpy.withEmailChangedMessage(userId, email)</code> 看起来和最初 Mock <code>IMessageBus</code> 时的
+  <code>verify(messageBusMock).sendEmailChangedMessage(userId, email)</code> 很像 —— 因为 <code>BusSpy</code> 和 <code>MessageBus</code> 都是 <code>IBus</code> 上面的包装。
+  但有一个关键区别：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="Mock IMessageBus 时，测试只验证调用了生产代码里的方法，消息格式由生产代码自己说了算。使用 BusSpy 时，期望的消息格式写在测试代码里，是独立于生产代码的检查点">
+  <rect class="bx-r" x="14" y="16" width="356" height="228" rx="12"/>
+  <text class="ttl on-r" x="30" y="42">&#10007; Mock IMessageBus：轻信被审计的人</text>
+  <rect class="bx" x="34" y="62" width="130" height="40" rx="8"/><text class="lbl" x="99" y="87" text-anchor="middle">测试</text>
+  <rect class="bx-d" x="210" y="62" width="140" height="40" rx="8"/><text class="lbl" x="280" y="87" text-anchor="middle">IMessageBus 的 Mock</text>
+  <path class="ln" d="M166 82 H206" marker-end="url(#ar)"/>
+  <text class="sm" x="34" y="128">测试只确认：「调了 sendEmailChangedMessage」</text>
+  <rect class="bx" x="34" y="144" width="316" height="44" rx="8"/>
+  <text class="sm" x="46" y="162">消息到底长什么样？写在<tspan font-weight="700">生产代码</tspan> MessageBus 里，</text>
+  <text class="sm" x="46" y="178">而这段代码根本没被测试执行到</text>
+  <text class="sm on-r" x="34" y="212">有人把 "NewEmail" 改成 "Email" &rarr; 测试照样绿，</text>
+  <text class="sm on-r" x="34" y="230">下游系统全挂</text>
+
+  <rect class="bx-g" x="390" y="16" width="356" height="228" rx="12"/>
+  <text class="ttl on-g" x="406" y="42">&#10003; BusSpy：独立的审计员</text>
+  <rect class="bx" x="410" y="62" width="90" height="40" rx="8"/><text class="lbl" x="455" y="87" text-anchor="middle">测试</text>
+  <rect class="bx" x="524" y="62" width="100" height="40" rx="8"/><text class="lbl" x="574" y="87" text-anchor="middle">MessageBus</text>
+  <rect class="bx-a" x="648" y="62" width="82" height="40" rx="8"/><text class="lbl on-a" x="689" y="87" text-anchor="middle">BusSpy</text>
+  <path class="ln" d="M502 82 H520" marker-end="url(#ar)"/>
+  <path class="ln" d="M626 82 H644" marker-end="url(#ar)"/>
+  <text class="sm" x="406" y="128">真的 MessageBus 被执行，Spy 收到真正的文本</text>
+  <rect class="bx" x="410" y="144" width="316" height="44" rx="8"/>
+  <text class="sm" x="422" y="162">期望的消息格式在<tspan font-weight="700">测试代码</tspan> BusSpy 里</text>
+  <text class="sm" x="422" y="178">又写了一遍 —— 这份重复是故意的</text>
+  <text class="sm on-g" x="406" y="212">有人改了消息格式 &rarr; 两边对不上，测试立刻变红</text>
+</svg>
+<figcaption>图 9-2　<code>BusSpy</code> 属于测试代码，<code>MessageBus</code> 属于生产代码 —— 这就是区别</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; 把测试想象成审计员</div>
+  <p>
+    好的审计员不会被审计对象说什么就信什么，他会<strong>独立地</strong>再核对一遍。
+    <strong>断言时不要依赖生产代码。</strong>在测试里使用一套独立的字面量和常量，必要时宁可把它们从生产代码里<strong>复制</strong>一份。
+    否则你写出来的可能是<strong>同义反复测试</strong> —— 什么都没验证。
+  </p>
+</div>
+
+<h3>那 IDomainLogger 呢？</h3>
+
+<p>
+  <code>DomainLogger</code> 也是包在 <code>ILogger</code> 外面的一层。测试要不要也改成 Mock 更靠边的 <code>ILogger</code>？<strong>多数项目里没必要。</strong>
+</p>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>消息总线</th><th>日志</th></tr>
+  <tr><td><strong>谁在消费</strong></td><td>其他系统（程序）</td><td>支持人员、系统管理员（人）</td></tr>
+  <tr><td><strong>对格式的敏感度</strong></td><td>很高 —— 你不知道外部系统对结构变化会作何反应</td><td>较低 —— 重要的是日志<strong>存在</strong>以及它携带的<strong>信息</strong>，而非确切的文本格式</td></tr>
+  <tr><td><strong>Mock 打在哪</strong></td><td>最边缘（<code>IBus</code>），验证确切文本</td><td><code>IDomainLogger</code> 就够了</td></tr>
+</table>
+</div>
+
+<p>都是不受管依赖，都需要向后兼容，但对兼容的<strong>精确程度</strong>要求不同。</p>
+
+<h2 id="practices">五条 Mock 最佳实践</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="五条 Mock 最佳实践清单">
+  <rect class="bx-a" x="14" y="14" width="360" height="60" rx="10"/>
+  <text class="ttl on-a" x="30" y="38">① 只对不受管依赖使用 Mock</text>
+  <text class="sm" x="30" y="58">第 5、8 章。做到这一条就成功了三分之二</text>
+
+  <rect class="bx-a" x="386" y="14" width="360" height="60" rx="10"/>
+  <text class="ttl on-a" x="402" y="38">② 在系统的最边缘验证交互</text>
+  <text class="sm" x="402" y="58">本章上半部分。Mock 调用链的最后一环</text>
+
+  <rect class="bx" x="14" y="88" width="236" height="74" rx="10"/>
+  <text class="ttl" x="30" y="112">③ 只在集成测试里用 Mock</text>
+  <text class="sm" x="30" y="132">单元测试测领域模型，</text>
+  <text class="sm" x="30" y="148">那里没有不受管依赖</text>
+
+  <rect class="bx" x="262" y="88" width="236" height="74" rx="10"/>
+  <text class="ttl" x="278" y="112">④ 始终验证调用次数</text>
+  <text class="sm" x="278" y="132">该有的调用要有，</text>
+  <text class="sm" x="278" y="148">不该有的调用不能有</text>
+
+  <rect class="bx" x="510" y="88" width="236" height="74" rx="10"/>
+  <text class="ttl" x="526" y="112">⑤ 只 Mock 你自己的类型</text>
+  <text class="sm" x="526" y="132">给第三方库写适配器，</text>
+  <text class="sm" x="526" y="148">Mock 适配器而不是库本身</text>
+
+  <rect class="bx-d" x="14" y="178" width="732" height="56" rx="10"/>
+  <text class="lbl" x="30" y="202">顺带澄清一个误区：「一个测试只能有一个 Mock」是错的。</text>
+  <text class="sm" x="30" y="222">Mock 的数量只取决于这个操作涉及多少个不受管依赖，你控制不了，也不需要控制</text>
+</svg>
+<figcaption>图 9-3　Mock 的五条最佳实践</figcaption>
+</figure>
+
+<h3>③ Mock 只用于集成测试</h3>
+
+<p>
+  这条来自第 7 章的基本原则：<strong>代码要么和进程外依赖通信，要么复杂，不能两样都占。</strong>
+  于是自然形成两层 —— 处理复杂度的领域模型，和处理通信的控制器。
+  领域模型的测试是单元测试，控制器的测试是集成测试。Mock 只用于不受管依赖，而只有控制器和这种依赖打交道，
+  所以 <strong>Mock 只该出现在测试控制器的集成测试里</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="领域模型负责复杂逻辑，不接触进程外依赖，用单元测试覆盖，不需要 Mock。控制器负责与进程外依赖通信，用集成测试覆盖，只在这里对不受管依赖使用 Mock">
+  <rect class="bx-a" x="20" y="16" width="350" height="168" rx="12"/>
+  <text class="ttl on-a" x="36" y="42">领域模型：处理复杂度</text>
+  <text class="sm" x="36" y="62">不和任何进程外依赖打交道</text>
+  <rect class="bx" x="36" y="78" width="318" height="40" rx="8"/><text class="lbl" x="195" y="103" text-anchor="middle">&#9654; 单元测试</text>
+  <rect class="bx-g" x="36" y="128" width="318" height="40" rx="8"/><text class="lbl on-g" x="195" y="153" text-anchor="middle">没有不受管依赖 &rarr; 没有东西可 Mock</text>
+
+  <rect class="bx-b" x="390" y="16" width="350" height="168" rx="12"/>
+  <text class="ttl on-b" x="406" y="42">控制器：处理通信</text>
+  <text class="sm" x="406" y="62">数据库、消息总线、邮件……都在这一层接触</text>
+  <rect class="bx" x="406" y="78" width="318" height="40" rx="8"/><text class="lbl" x="565" y="103" text-anchor="middle">&#9654; 集成测试</text>
+  <rect class="bx-p" x="406" y="128" width="318" height="40" rx="8"/><text class="lbl on-p" x="565" y="153" text-anchor="middle">Mock 只出现在这里（且只针对不受管依赖）</text>
+</svg>
+<figcaption>图 9-4　代码分两层，Mock 只属于其中一层</figcaption>
+</figure>
+
+<h3>不是「一个测试只能有一个 Mock」</h3>
+
+<p>
+  有人说一个测试里超过一个 Mock 就说明测了太多东西。这是误解，根源还是第 2 章那个误解 —— 以为「单元」是代码单元。
+  单元是<strong>行为</strong>单元，实现它用多少代码不重要；同理，<strong>验证一个行为单元需要几个 Mock 也不重要</strong>。
+  我们的例子就用了两个（日志和消息总线），还可能更多。
+</p>
+
+<h3>④ 验证调用次数</h3>
+
+<p>与不受管依赖通信时，两件事都要确保：</p>
+<ul>
+  <li><strong>期望的调用确实发生了</strong> —— 应用不能漏发外部系统期待的消息。</li>
+  <li><strong>没有意料之外的调用</strong> —— 应用也不能发出多余的消息。</li>
+</ul>
+<p>向后兼容是双向的。</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="向后兼容是双向的。恰好发送一次是正确的；漏发会让下游等不到通知；多发会让下游重复处理。只验证调用存在而不验证次数，发现不了多发的问题">
+  <rect class="bx-g" x="14" y="16" width="236" height="188" rx="12"/>
+  <text class="ttl on-g" x="28" y="42">&#10003; 恰好一条</text>
+  <rect class="bx" x="28" y="62" width="60" height="36" rx="6"/><text class="sm" x="58" y="85" text-anchor="middle">应用</text>
+  <rect class="bx-g" x="112" y="68" width="40" height="24" rx="4"/><text class="sm on-g" x="132" y="85" text-anchor="middle">消息</text>
+  <rect class="bx" x="176" y="62" width="60" height="36" rx="6"/><text class="sm" x="206" y="85" text-anchor="middle">下游</text>
+  <path class="ln" d="M90 80 H108" marker-end="url(#ar)"/><path class="ln" d="M154 80 H172" marker-end="url(#ar)"/>
+  <text class="sm" x="28" y="130">下游收到了它期待的，</text>
+  <text class="sm" x="28" y="148">也只收到了它期待的</text>
+
+  <rect class="bx-r" x="262" y="16" width="236" height="188" rx="12"/>
+  <text class="ttl on-r" x="276" y="42">&#10007; 漏发</text>
+  <rect class="bx" x="276" y="62" width="60" height="36" rx="6"/><text class="sm" x="306" y="85" text-anchor="middle">应用</text>
+  <rect class="bx" x="424" y="62" width="60" height="36" rx="6"/><text class="sm" x="454" y="85" text-anchor="middle">下游</text>
+  <path class="ln-d" d="M338 80 H420"/>
+  <text class="sm" x="276" y="130">下游一直等不到通知</text>
+  <text class="sm on-r" x="276" y="166">靠「验证期望的调用存在」</text>
+  <text class="sm on-r" x="276" y="184">来发现</text>
+
+  <rect class="bx-r" x="510" y="16" width="236" height="188" rx="12"/>
+  <text class="ttl on-r" x="524" y="42">&#10007; 多发</text>
+  <rect class="bx" x="524" y="62" width="60" height="36" rx="6"/><text class="sm" x="554" y="85" text-anchor="middle">应用</text>
+  <rect class="bx-r" x="600" y="60" width="40" height="18" rx="4" style="fill:var(--panel)"/><text class="sm on-r" x="620" y="73" text-anchor="middle">消息</text>
+  <rect class="bx-r" x="600" y="82" width="40" height="18" rx="4" style="fill:var(--panel)"/><text class="sm on-r" x="620" y="95" text-anchor="middle">消息</text>
+  <rect class="bx" x="672" y="62" width="60" height="36" rx="6"/><text class="sm" x="702" y="85" text-anchor="middle">下游</text>
+  <path class="ln" d="M586 80 H596" marker-end="url(#ar)"/><path class="ln" d="M642 80 H668" marker-end="url(#ar)"/>
+  <text class="sm" x="524" y="130">下游重复处理：重复扣款、重复发货……</text>
+  <text class="sm on-r" x="524" y="166">靠「验证次数 / 没有其他调用」</text>
+  <text class="sm on-r" x="524" y="184">来发现</text>
+</svg>
+<figcaption>图 9-5　两类错误需要两种检查。只写「调用过」是不够的</figcaption>
+</figure>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// 不够：只确认「发过」
+verify(messageBusMock).sendEmailChangedMessage(user.getUserId(), "new@gmail.com");
+
+// 更好：确认「恰好发了一次」
+verify(messageBusMock, times(1))
+    .sendEmailChangedMessage(user.getUserId(), "new@gmail.com");
+
+// 最好：再确认这个 Mock 上没有任何别的调用
+verifyNoMoreInteractions(messageBusMock);
+
+// Spy 的 shouldSendNumberOfMessages(1) 一步涵盖了后两项
+busSpy.shouldSendNumberOfMessages(1)
+      .withEmailChangedMessage(user.getUserId(), "new@gmail.com");
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# 不够：只确认「发过」
+message_bus_mock.send_email_changed_message.assert_called_with(
+    user.user_id, "new@gmail.com")
+
+# 更好：确认「恰好发了一次」
+message_bus_mock.send_email_changed_message.assert_called_once_with(
+    user.user_id, "new@gmail.com")
+
+# 最好：再确认这个 Mock 上没有任何别的调用
+assert message_bus_mock.mock_calls == [
+    call.send_email_changed_message(user.user_id, "new@gmail.com")]
+
+# Spy 的 should_send_number_of_messages(1) 一步涵盖了后两项
+(bus_spy.should_send_number_of_messages(1)
+        .with_email_changed_message(user.user_id, "new@gmail.com"))
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// 不够：只确认「发过」
+expect(messageBusMock.sendEmailChangedMessage)
+  .toHaveBeenCalledWith(user.userId, 'new@gmail.com')
+
+// 更好：确认「恰好发了一次」
+expect(messageBusMock.sendEmailChangedMessage).toHaveBeenCalledTimes(1)
+
+// 最好：再确认这个 Mock 上的其他方法都没被调用
+expect(messageBusMock.sendSomethingElse).not.toHaveBeenCalled()
+
+// Spy 的 shouldSendNumberOfMessages(1) 一步涵盖了后两项
+busSpy.shouldSendNumberOfMessages(1)
+      .withEmailChangedMessage(user.userId, 'new@gmail.com')
+</pre></div>
+</div>
+<p class="src">对应原书 9.2.3 节</p>
+
+<h3>⑤ 只 Mock 你自己拥有的类型</h3>
+
+<p>
+  这条准则来自 Freeman 和 Pryce：<strong>永远在第三方库外面写一层自己的适配器，然后 Mock 这个适配器</strong>，而不是 Mock 底层的第三方类型。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="在你的代码和第三方库之间放一层自己的适配器。测试 Mock 的是适配器。第三方库升级带来的变化被限制在适配器这一个类里">
+  <rect class="bx" x="14" y="60" width="180" height="70" rx="10"/>
+  <text class="ttl" x="104" y="90" text-anchor="middle">你的应用代码</text>
+  <text class="sm" x="104" y="110" text-anchor="middle">控制器、MessageBus…</text>
+  <path class="ln" d="M196 95 H236" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="240" y="50" width="160" height="90" rx="10"/>
+  <text class="ttl on-a" x="320" y="78" text-anchor="middle">适配器（你的）</text>
+  <text class="mono sm" x="320" y="98" text-anchor="middle">IBus.send(text)</text>
+  <text class="sm" x="320" y="120" text-anchor="middle">防腐层</text>
+  <path class="ln" d="M402 95 H442" marker-end="url(#ar)"/>
+  <rect class="bx" x="446" y="60" width="140" height="70" rx="10"/>
+  <text class="ttl" x="516" y="90" text-anchor="middle">第三方 SDK</text>
+  <text class="sm" x="516" y="110" text-anchor="middle">别人的代码</text>
+  <path class="ln-b" d="M588 95 H628" marker-end="url(#ar-b)"/>
+  <rect class="bx-b" x="632" y="60" width="114" height="70" rx="10"/>
+  <text class="ttl on-b" x="689" y="100" text-anchor="middle">外部系统</text>
+
+  <rect class="bx-g" x="240" y="6" width="160" height="30" rx="15"/>
+  <text class="sm on-g" x="320" y="26" text-anchor="middle">&#10003; Mock 打在这里</text>
+  <path class="ln-g" d="M320 38 V46" marker-end="url(#ar-g)"/>
+  <rect class="bx-r" x="446" y="16" width="140" height="30" rx="15"/>
+  <text class="sm on-r" x="516" y="36" text-anchor="middle">&#10007; 别 Mock 它</text>
+
+  <rect class="bx-d" x="14" y="156" width="732" height="52" rx="10"/>
+  <text class="sm" x="30" y="178">适配器帮你：① 屏蔽底层库的复杂性　② 只暴露你需要的功能　③ 用你自己项目的领域语言来表达</text>
+  <text class="sm" x="30" y="196">库升级时接口变了？涟漪效应被限制在适配器这一个类里，不会波及整个代码库</text>
+</svg>
+<figcaption>图 9-6　适配器就是你的代码和外部世界之间的<strong>防腐层</strong>（anti-corruption layer）</figcaption>
+</figure>
+
+<p>为什么不直接 Mock 第三方库提供的接口？</p>
+<ul>
+  <li>你对第三方代码的工作方式往往没有深入了解。Mock 它的接口有风险：你得确保你 Mock 出来的行为和库的真实行为一致。</li>
+  <li>适配器屏蔽了第三方代码里不重要的技术细节，用你的应用自己的语言定义了与那个库的关系。</li>
+</ul>
+
+<div class="box note">
+  <div class="t">&#9432; 这条准则不适用于进程内依赖和受管依赖</div>
+  <p>
+    Mock 只用于不受管依赖，所以没必要给内存里的依赖或受管依赖包适配器。
+    比如某个库提供日期时间 API，直接用就行，它不涉及不受管依赖。
+    同样，只要 ORM 访问的是外部应用看不到的数据库，也没必要给它再包一层。
+    当然你<em>可以</em>给任何库都包一层，但除了不受管依赖，很少值得这么做。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>在系统的<strong>最边缘</strong>验证与不受管依赖的交互：Mock 控制器到不受管依赖之间那串类型里的<strong>最后一个</strong>。
+      这样既增强了防止回归（集成测试验证了更多代码），又增强了抵抗重构（Mock 脱离了代码的实现细节）。</li>
+  <li><strong>Spy 是手写的 Mock。</strong>对于系统边缘的类，Spy 优于 Mock：它让断言阶段的代码可以复用，测试更短、更好读。</li>
+  <li><strong>断言时不要依赖生产代码。</strong>在测试里用一套独立的字面量和常量，必要时从生产代码复制。测试应当是独立于生产代码的检查点，否则可能写出同义反复测试。</li>
+  <li>不是所有不受管依赖都需要同等精度的向后兼容。如果消息的确切结构不重要，你只想验证它存在以及它携带的信息，可以不必追到最边缘。典型例子是日志。</li>
+  <li>Mock 只用于不受管依赖，而只有控制器和这类依赖打交道，所以<strong>只在集成测试里用 Mock，单元测试里不要用</strong>。</li>
+  <li>一个测试里用几个 Mock 无关紧要，数量只取决于参与操作的不受管依赖有几个。</li>
+  <li>既要确保期望的调用<strong>存在</strong>，也要确保<strong>没有</strong>意料之外的调用。</li>
+  <li><strong>只 Mock 你自己拥有的类型。</strong>给访问不受管依赖的第三方库写适配器，Mock 适配器而不是底层类型。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>你的代码调用链是：<code>OrderController</code> &rarr; <code>NotificationService</code> &rarr; <code>SmsGateway</code>（你写的，包装了厂商 SDK）&rarr; 厂商短信 SDK。集成测试里该 Mock 哪个？</summary>
+  <p><code>SmsGateway</code>。它是你自己拥有的、离不受管依赖最近的类型。不要 Mock <code>NotificationService</code>（不在边缘），也不要直接 Mock 厂商 SDK（不是你的类型）。</p>
+</details>
+<details class="quiz">
+  <summary>为什么说在 <code>BusSpy</code> 里把消息格式字符串「又写一遍」是好事，而不是违反 DRY？</summary>
+  <p>因为测试需要一个独立于生产代码的检查点。如果测试复用了生产代码里的格式常量，有人改错格式时测试也会跟着「改对」，永远是绿的 —— 成了同义反复。</p>
+</details>
+<details class="quiz">
+  <summary>测试只写了 <code>verify(bus).send(expectedMessage)</code>，没验证次数。可能漏掉什么 Bug？</summary>
+  <p>重复发送（同一条消息发了两次），或者额外发了别的消息。对下游系统来说，这些都可能是严重问题（比如重复扣款、重复发货）。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>在你的 CRM 实现里引入 <code>IBus</code> / <code>MessageBus</code> 两层，把集成测试的 Mock 从 <code>IMessageBus</code> 挪到 <code>IBus</code>，然后删掉 <code>IMessageBus</code> 接口。</li>
+    <li>手写一个 <code>BusSpy</code>，用流式接口重写断言。然后故意把 <code>MessageBus</code> 里的 <code>"NewEmail"</code> 改成 <code>"Email"</code>，确认测试变红。</li>
+    <li>在你的项目里找一处直接 Mock 第三方库类型的地方（HTTP 客户端、云存储 SDK、短信 SDK 等）。给它包一层只暴露你所需功能的适配器，改成 Mock 适配器。</li>
+    <li>检查项目里现有的 Mock 断言：有多少验证了调用次数？有多少确认了「没有其他调用」？</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

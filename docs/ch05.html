@@ -1,0 +1,1049 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 5 章 · Mock 与测试脆弱性 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="5">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 5 章</span>
+<h1>Mock 与测试脆弱性</h1>
+<p class="lede">
+  有人觉得 Mock 是神器，几乎每个测试都用；有人觉得 Mock 是万恶之源，能不用就不用。
+  真相在中间：Mock <strong>经常</strong>导致脆弱的测试，但有一类场景它不仅能用，而且就该用它。
+  这一章用第 4 章的尺子，把这条界线划清楚。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>分清 <strong>Mock</strong> 和 <strong>Stub</strong>，记住「永远不要断言与 Stub 的交互」</li>
+    <li>分清<strong>可观察行为</strong>和<strong>实现细节</strong>，以及它们与公开 / 私有 API 的关系</li>
+    <li>理解<strong>六边形架构</strong>，以及<strong>系统内通信</strong>和<strong>系统间通信</strong>的区别</li>
+    <li>知道 Mock 只该用在哪里：<strong>跨越应用边界、且副作用对外可见的交互</strong></li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="doubles">测试替身的种类</h2>
+
+<p>
+  <strong>测试替身</strong>是所有「非生产用的假依赖」的总称。按 Gerard Meszaros 的分法有五种：
+  dummy、stub、spy、mock、fake。看着吓人，其实可以归成<strong>两大类</strong>：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 280" role="img" aria-label="测试替身分为两大类：Mock 类包括 mock 和 spy；Stub 类包括 stub、dummy 和 fake">
+  <rect class="bx" x="300" y="14" width="160" height="40" rx="8"/>
+  <text class="ttl" x="380" y="39" text-anchor="middle">测试替身</text>
+  <path class="ln" d="M340 56 L200 92" marker-end="url(#ar)"/>
+  <path class="ln" d="M420 56 L560 92" marker-end="url(#ar)"/>
+
+  <rect class="bx-a" x="40" y="96" width="320" height="170" rx="12"/>
+  <text class="ttl on-a" x="200" y="122" text-anchor="middle">Mock 类</text>
+  <text class="sm" x="200" y="142" text-anchor="middle">模拟<tspan font-weight="700">并检查</tspan>「向外的交互」</text>
+  <rect class="bx" x="56" y="156" width="138" height="96" rx="8"/>
+  <text class="ttl" x="125" y="180" text-anchor="middle">mock</text>
+  <text class="sm" x="125" y="200" text-anchor="middle">用 Mock 框架</text>
+  <text class="sm" x="125" y="216" text-anchor="middle">生成的</text>
+  <rect class="bx" x="206" y="156" width="138" height="96" rx="8"/>
+  <text class="ttl" x="275" y="180" text-anchor="middle">spy</text>
+  <text class="sm" x="275" y="200" text-anchor="middle">作用相同，</text>
+  <text class="sm" x="275" y="216" text-anchor="middle">但是手写的</text>
+  <text class="sm" x="275" y="236" text-anchor="middle">（手写的 mock）</text>
+
+  <rect class="bx-b" x="400" y="96" width="320" height="170" rx="12"/>
+  <text class="ttl on-b" x="560" y="122" text-anchor="middle">Stub 类</text>
+  <text class="sm" x="560" y="142" text-anchor="middle">只模拟「向内的交互」，<tspan font-weight="700">不检查</tspan></text>
+  <rect class="bx" x="412" y="156" width="94" height="96" rx="8"/>
+  <text class="ttl" x="459" y="180" text-anchor="middle">dummy</text>
+  <text class="sm" x="459" y="200" text-anchor="middle">写死的占位值</text>
+  <text class="sm" x="459" y="216" text-anchor="middle">只为凑齐</text>
+  <text class="sm" x="459" y="232" text-anchor="middle">参数列表</text>
+  <rect class="bx" x="514" y="156" width="94" height="96" rx="8"/>
+  <text class="ttl" x="561" y="180" text-anchor="middle">stub</text>
+  <text class="sm" x="561" y="200" text-anchor="middle">可按场景配置</text>
+  <text class="sm" x="561" y="216" text-anchor="middle">返回不同值的</text>
+  <text class="sm" x="561" y="232" text-anchor="middle">完整依赖</text>
+  <rect class="bx" x="616" y="156" width="94" height="96" rx="8"/>
+  <text class="ttl" x="663" y="180" text-anchor="middle">fake</text>
+  <text class="sm" x="663" y="200" text-anchor="middle">和 stub 差不多</text>
+  <text class="sm" x="663" y="216" text-anchor="middle">常用来替代</text>
+  <text class="sm" x="663" y="232" text-anchor="middle">还不存在的依赖</text>
+</svg>
+<figcaption>图 5-1　五种测试替身归为两类。类内的差别只是不重要的实现细节</figcaption>
+</figure>
+
+<p>两类的区别归结为<strong>交互的方向</strong>：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="被测系统向 SMTP 服务器发送邮件是向外的交互，产生副作用，对应的替身是 Mock；被测系统从数据库取数据是向内的交互，没有副作用，对应的替身是 Stub">
+  <rect class="bx" x="300" y="80" width="160" height="70" rx="12"/>
+  <text class="ttl" x="380" y="120" text-anchor="middle">被测系统（SUT）</text>
+
+  <rect class="bx-a" x="560" y="20" width="180" height="70" rx="10"/>
+  <text class="ttl on-a" x="650" y="48" text-anchor="middle">SMTP 服务器</text>
+  <text class="sm" x="650" y="68" text-anchor="middle">替身 = Mock</text>
+  <path class="ln-a" d="M462 100 L556 62" marker-end="url(#ar-a)"/>
+  <text class="lbl on-a" x="498" y="62" text-anchor="middle">发送邮件</text>
+
+  <rect class="bx-b" x="560" y="140" width="180" height="70" rx="10"/>
+  <text class="ttl on-b" x="650" y="168" text-anchor="middle">数据库</text>
+  <text class="sm" x="650" y="188" text-anchor="middle">替身 = Stub</text>
+  <path class="ln-b" d="M556 168 L464 132" marker-end="url(#ar-b)"/>
+  <text class="lbl on-b" x="498" y="172" text-anchor="middle">取回数据</text>
+
+  <rect class="bx-a" x="20" y="20" width="250" height="70" rx="10"/>
+  <text class="ttl on-a" x="34" y="44">向外的交互（outcoming）</text>
+  <text class="sm" x="34" y="62">SUT 调用依赖去<tspan font-weight="700">改变它的状态</tspan></text>
+  <text class="sm" x="34" y="78">会产生副作用</text>
+
+  <rect class="bx-b" x="20" y="140" width="250" height="70" rx="10"/>
+  <text class="ttl on-b" x="34" y="164">向内的交互（incoming）</text>
+  <text class="sm" x="34" y="182">SUT 调用依赖去<tspan font-weight="700">获取输入数据</tspan></text>
+  <text class="sm" x="34" y="198">没有副作用</text>
+</svg>
+<figcaption>图 5-2　Mock 对应「往外发」的交互，Stub 对应「往里拿」的交互</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; 一字之差</div>
+  <p>
+    Mock：<strong>模拟并检查</strong>交互。　Stub：<strong>只模拟</strong>交互。　这个「检查」就是关键区别，马上你会看到为什么。
+  </p>
+</div>
+
+<h3>Mock（工具）不等于 Mock（测试替身）</h3>
+
+<p>
+  「mock」这个词被用得很泛。它有时指任意测试替身，有时指 Mock 框架里的类 / 函数
+  （Mockito 的 <code>mock()</code>、Python 的 <code>Mock</code>、Vitest 的 <code>vi.fn()</code>）。
+  <strong>同一个工具既能造出 Mock，也能造出 Stub</strong> —— 造出来的是什么，看你拿它干什么。
+</p>
+
+<p><strong>拿工具造一个 Mock</strong>（检查向外的调用 —— 发问候邮件）：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void sending_a_greetings_email() {
+    IEmailGateway mock = mock(IEmailGateway.class);     // 用工具造出一个 mock（替身）
+    var sut = new Controller(mock);
+
+    sut.greetUser("user@email.com");
+
+    verify(mock, times(1))                              // 检查 SUT 对替身的调用
+        .sendGreetingsEmail("user@email.com");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+from unittest.mock import Mock
+
+
+def test_sending_a_greetings_email():
+    mock = Mock(spec=EmailGateway)                      # 用工具造出一个 mock（替身）
+    sut = Controller(mock)
+
+    sut.greet_user("user@email.com")
+
+    mock.send_greetings_email.assert_called_once_with(  # 检查 SUT 对替身的调用
+        "user@email.com")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('sending a greetings email', () =&gt; {
+  const mock: IEmailGateway = { sendGreetingsEmail: vi.fn() }   // 用工具造出一个 mock（替身）
+  const sut = new Controller(mock)
+
+  sut.greetUser('user@email.com')
+
+  expect(mock.sendGreetingsEmail).toHaveBeenCalledOnce()        // 检查 SUT 对替身的调用
+  expect(mock.sendGreetingsEmail).toHaveBeenCalledWith('user@email.com')
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 5.1 · 仓库 <code>code/Book/Chapter5/Listing1/Listing1.cs</code></p>
+
+<p><strong>拿同一个工具造一个 Stub</strong>（提供向内的数据 —— 用户数量）：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void creating_a_report() {
+    IDatabase stub = mock(IDatabase.class);             // 同一个工具，这次造的是 stub
+    when(stub.getNumberOfUsers()).thenReturn(10);       // 设置一个预设答案
+    var sut = new Controller(stub);
+
+    Report report = sut.createReport();
+
+    assertThat(report.numberOfUsers()).isEqualTo(10);   // 只断言最终结果
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_creating_a_report():
+    stub = Mock(spec=Database)                          # 同一个工具，这次造的是 stub
+    stub.get_number_of_users.return_value = 10          # 设置一个预设答案
+    sut = Controller(stub)
+
+    report = sut.create_report()
+
+    assert report.number_of_users == 10                 # 只断言最终结果
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('creating a report', () =&gt; {
+  const stub: IDatabase = {                             // 同一个工具，这次造的是 stub
+    getNumberOfUsers: vi.fn().mockReturnValue(10),      // 设置一个预设答案
+  }
+  const sut = new Controller(stub)
+
+  const report = sut.createReport()
+
+  expect(report.numberOfUsers).toBe(10)                 // 只断言最终结果
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 5.2</p>
+
+<h3>不要断言与 Stub 的交互</h3>
+
+<p>
+  SUT 对 Stub 的调用<strong>不是最终结果的一部分</strong>，它只是产生结果的<strong>手段</strong>：Stub 提供输入，SUT 据此生成输出。
+  对比上面两个例子：
+</p>
+<ul>
+  <li><code>sendGreetingsEmail("user@email.com")</code> 是一个真实的结果，而且对业务人员有意义 —— 「给用户发问候邮件」正是业务希望系统做的事。</li>
+  <li><code>getNumberOfUsers()</code> 根本不是结果，它是 SUT「如何收集报表所需数据」的内部细节。</li>
+</ul>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✗ 反模式：断言与 stub 的交互"><pre>
+@Test
+void creating_a_report() {
+    IDatabase stub = mock(IDatabase.class);
+    when(stub.getNumberOfUsers()).thenReturn(10);
+    var sut = new Controller(stub);
+
+    Report report = sut.createReport();
+
+    assertThat(report.numberOfUsers()).isEqualTo(10);
+    verify(stub, times(1)).getNumberOfUsers();          // ✗ 不要这样做
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✗ 反模式：断言与 stub 的交互"><pre>
+def test_creating_a_report():
+    stub = Mock(spec=Database)
+    stub.get_number_of_users.return_value = 10
+    sut = Controller(stub)
+
+    report = sut.create_report()
+
+    assert report.number_of_users == 10
+    stub.get_number_of_users.assert_called_once()       # ✗ 不要这样做
+</pre></div>
+<div class="code" data-lang="ts" data-file="✗ 反模式：断言与 stub 的交互"><pre>
+test('creating a report', () =&gt; {
+  const stub: IDatabase = { getNumberOfUsers: vi.fn().mockReturnValue(10) }
+  const sut = new Controller(stub)
+
+  const report = sut.createReport()
+
+  expect(report.numberOfUsers).toBe(10)
+  expect(stub.getNumberOfUsers).toHaveBeenCalledOnce()  // ✗ 不要这样做
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 5.3</p>
+
+<p>
+  这种「验证不属于最终结果的东西」的做法叫<strong>过度指定</strong>（overspecification）。
+  哪天你给报表加了缓存，或者改成一次查询取回多个数字，报表完全正确，这个测试却红了。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 一个替身可以同时是 Mock 和 Stub</div>
+  <p>
+    第 2 章伦敦风格的测试里，<code>storeMock</code> 就是这样：给 <code>hasEnoughInventory()</code> 设置预设答案（Stub 的角色），
+    又验证 <code>removeInventory()</code> 的调用（Mock 的角色）。注意这是<strong>两个不同的方法</strong>，所以没有违反「不断言 Stub 交互」的规则。
+    这种两者兼具的替身仍然叫 Mock —— 总得选一个名字，而「是 Mock」这个事实更重要。
+  </p>
+</div>
+
+<h3>Mock / Stub 与命令 / 查询</h3>
+
+<p>
+  <strong>命令查询分离原则</strong>（CQS）说：每个方法要么是<strong>命令</strong>，要么是<strong>查询</strong>，不要两者都是。
+  「问一个问题不应该改变答案。」
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="命令查询分离：命令产生副作用且没有返回值，对应 Mock；查询没有副作用且有返回值，对应 Stub">
+  <rect class="bx" x="310" y="12" width="140" height="36" rx="8"/><text class="ttl" x="380" y="35" text-anchor="middle">方法</text>
+  <path class="ln" d="M350 50 L220 78" marker-end="url(#ar)"/>
+  <path class="ln" d="M410 50 L540 78" marker-end="url(#ar)"/>
+
+  <rect class="bx-a" x="80" y="82" width="280" height="84" rx="10"/>
+  <text class="ttl on-a" x="220" y="106" text-anchor="middle">命令（Command）</text>
+  <text class="lbl" x="220" y="128" text-anchor="middle">产生副作用 · 没有返回值（void）</text>
+  <text class="mono sm" x="220" y="150" text-anchor="middle">sendGreetingsEmail(email)</text>
+
+  <rect class="bx-b" x="400" y="82" width="280" height="84" rx="10"/>
+  <text class="ttl on-b" x="540" y="106" text-anchor="middle">查询（Query）</text>
+  <text class="lbl" x="540" y="128" text-anchor="middle">没有副作用 · 返回一个值</text>
+  <text class="mono sm" x="540" y="150" text-anchor="middle">getNumberOfUsers() : int</text>
+
+  <path class="ln-a" d="M220 168 V186" marker-end="url(#ar-a)"/>
+  <path class="ln-b" d="M540 168 V186" marker-end="url(#ar-b)"/>
+  <text class="ttl on-a" x="220" y="208" text-anchor="middle">替换它的替身是 Mock</text>
+  <text class="ttl on-b" x="540" y="208" text-anchor="middle">替换它的替身是 Stub</text>
+</svg>
+<figcaption>图 5-3　命令对应 Mock，查询对应 Stub</figcaption>
+</figure>
+
+<p>
+  当然不是所有方法都能遵守 CQS —— 经典的例外是 <code>stack.pop()</code>，它既移除栈顶元素又把它返回。但能遵守就尽量遵守：
+  这样只看方法签名就知道它干什么。
+</p>
+
+<h2 id="observable">可观察行为 vs. 实现细节</h2>
+
+<p>
+  第 4 章说过：测试产生误报，是因为它和实现细节耦合了；唯一的出路是只验证<strong>可观察行为</strong>，关注「做了什么」而不是「怎么做的」。
+  那么到底什么算实现细节，什么算可观察行为？
+</p>
+
+<h3>可观察行为 &ne; 公开 API</h3>
+
+<p>所有生产代码都可以沿<strong>两个互相独立的维度</strong>分类：</p>
+
+<div class="tw">
+<table>
+  <tr><th>维度</th><th>怎么区分</th></tr>
+  <tr><td><strong>公开 API</strong> vs. <strong>私有 API</strong></td><td>语言的访问修饰符：<code>public</code> / <code>private</code>；Python 的下划线前缀约定；TS 的 <code>export</code> 与 <code>private</code></td></tr>
+  <tr><td><strong>可观察行为</strong> vs. <strong>实现细节</strong></td><td>看代码是否直接帮助<strong>客户端</strong>达成它的某个<strong>目标</strong></td></tr>
+</table>
+</div>
+
+<div class="term">
+  <b class="w">可观察行为（observable behavior）</b>
+  <p>一段代码要算作可观察行为，必须做到以下两件事之一：</p>
+  <ul>
+    <li>暴露一个<strong>操作</strong>，帮助客户端达成它的某个目标。操作是执行计算或产生副作用（或两者兼有）的方法。</li>
+    <li>暴露一个<strong>状态</strong>，帮助客户端达成它的某个目标。状态是系统当前的情况。</li>
+  </ul>
+  <p>两件都没做的代码，就是<strong>实现细节</strong>。</p>
+</div>
+
+<p>
+  注意：一段代码是不是可观察行为，取决于<strong>它的客户端是谁、客户端的目标是什么</strong>。
+  「客户端」可以是同一代码库里的调用方、外部应用，或者用户界面。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="设计良好的 API 中，公开 API 与可观察行为重合，实现细节全部私有。泄漏实现细节的 API 中，公开部分超出了可观察行为">
+  <text class="ttl on-g" x="195" y="24" text-anchor="middle">&#10003; 设计良好的 API</text>
+  <rect class="bx-d" x="30" y="38" width="330" height="150" rx="12"/>
+  <text class="sm" x="44" y="58">私有 API</text>
+  <rect class="bx" x="200" y="68" width="144" height="46" rx="8"/>
+  <text class="lbl" x="272" y="96" text-anchor="middle">实现细节</text>
+  <rect class="bx-g" x="46" y="88" width="140" height="86" rx="10"/>
+  <text class="sm on-g" x="116" y="108" text-anchor="middle">公开 API</text>
+  <text class="ttl on-g" x="116" y="138" text-anchor="middle">可观察行为</text>
+  <text class="sm" x="195" y="212" text-anchor="middle">公开的 = 客户端需要的，不多也不少</text>
+
+  <text class="ttl on-r" x="565" y="24" text-anchor="middle">&#10007; 泄漏了实现细节</text>
+  <rect class="bx-d" x="400" y="38" width="330" height="150" rx="12"/>
+  <text class="sm" x="414" y="58">私有 API</text>
+  <rect class="bx-r" x="416" y="74" width="298" height="100" rx="10"/>
+  <text class="sm on-r" x="428" y="94">公开 API</text>
+  <rect class="bx-g" x="430" y="104" width="130" height="56" rx="8"/>
+  <text class="ttl on-g" x="495" y="137" text-anchor="middle">可观察行为</text>
+  <rect class="bx" x="572" y="104" width="130" height="56" rx="8"/>
+  <text class="lbl on-r" x="637" y="128" text-anchor="middle">泄漏出来的</text>
+  <text class="lbl on-r" x="637" y="146" text-anchor="middle">实现细节</text>
+  <text class="sm" x="565" y="212" text-anchor="middle">公开的范围超出了客户端真正需要的</text>
+  <text class="sm" x="380" y="240" text-anchor="middle">理想情况：系统的公开 API 恰好等于它的可观察行为</text>
+</svg>
+<figcaption>图 5-4　设计良好的 API 与泄漏实现细节的 API</figcaption>
+</figure>
+
+<h3>例子一：泄漏了一个「操作」</h3>
+
+<p><code>User</code> 类有一个不变量：用户名不能超过 50 个字符，超过要截断。看这个版本：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✗ 泄漏实现细节"><pre>
+public class User {
+    public String name;
+
+    public String normalizeName(String name) {
+        String result = (name == null ? "" : name).trim();
+        return result.length() &gt; 50 ? result.substring(0, 50) : result;
+    }
+}
+
+public class UserController {
+    public void renameUser(int userId, String newName) {
+        User user = getUserFromDatabase(userId);
+
+        String normalizedName = user.normalizeName(newName);   // 调用方必须记得先调这个
+        user.name = normalizedName;
+
+        saveUserToDatabase(user);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✗ 泄漏实现细节"><pre>
+class User:
+    def __init__(self) -&gt; None:
+        self.name = ""
+
+    def normalize_name(self, name: str | None) -&gt; str:
+        result = (name or "").strip()
+        return result[:50]
+
+
+class UserController:
+    def rename_user(self, user_id: int, new_name: str) -&gt; None:
+        user = self._get_user_from_database(user_id)
+
+        normalized_name = user.normalize_name(new_name)   # 调用方必须记得先调这个
+        user.name = normalized_name
+
+        self._save_user_to_database(user)
+</pre></div>
+<div class="code" data-lang="ts" data-file="✗ 泄漏实现细节"><pre>
+export class User {
+  name = ''
+
+  normalizeName(name: string | null): string {
+    const result = (name ?? '').trim()
+    return result.length &gt; 50 ? result.substring(0, 50) : result
+  }
+}
+
+export class UserController {
+  renameUser(userId: number, newName: string): void {
+    const user = this.getUserFromDatabase(userId)
+
+    const normalizedName = user.normalizeName(newName)   // 调用方必须记得先调这个
+    user.name = normalizedName
+
+    this.saveUserToDatabase(user)
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 5.5 · 仓库 <code>code/Book/Chapter5/Listing5/Listing5.cs</code></p>
+
+<p>
+  客户端（<code>UserController</code>）的目标是<strong>改用户名</strong>。<code>User</code> 的两个公开成员里：
+</p>
+<ul>
+  <li><code>name</code> 的赋值 —— 是一个直接帮助客户端达成目标的操作。<strong>可观察行为。</strong></li>
+  <li><code>normalizeName()</code> —— 也是操作，但和客户端的目标没有直接关系。客户端调它，仅仅是为了满足 <code>User</code> 自己的不变量。<strong>它是泄漏到公开 API 的实现细节。</strong></li>
+</ul>
+
+<p>修复方法：把 <code>normalizeName</code> 藏起来，在设置名字时由 <code>User</code> 自己调用：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✓ 设计良好的 API"><pre>
+public class User {
+    private String name;
+
+    public String getName() { return name; }
+
+    public void setName(String name) {
+        this.name = normalizeName(name);
+    }
+
+    private String normalizeName(String name) {
+        String result = (name == null ? "" : name).trim();
+        return result.length() &gt; 50 ? result.substring(0, 50) : result;
+    }
+}
+
+public class UserController {
+    public void renameUser(int userId, String newName) {
+        User user = getUserFromDatabase(userId);
+        user.setName(newName);                   // 一个目标，一个操作
+        saveUserToDatabase(user);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✓ 设计良好的 API"><pre>
+class User:
+    def __init__(self) -&gt; None:
+        self._name = ""
+
+    @property
+    def name(self) -&gt; str:
+        return self._name
+
+    @name.setter
+    def name(self, value: str | None) -&gt; None:
+        self._name = self._normalize_name(value)
+
+    @staticmethod
+    def _normalize_name(name: str | None) -&gt; str:
+        return (name or "").strip()[:50]
+
+
+class UserController:
+    def rename_user(self, user_id: int, new_name: str) -&gt; None:
+        user = self._get_user_from_database(user_id)
+        user.name = new_name                     # 一个目标，一个操作
+        self._save_user_to_database(user)
+</pre></div>
+<div class="code" data-lang="ts" data-file="✓ 设计良好的 API"><pre>
+export class User {
+  private _name = ''
+
+  get name(): string { return this._name }
+
+  set name(value: string | null) {
+    this._name = this.normalizeName(value)
+  }
+
+  private normalizeName(name: string | null): string {
+    const result = (name ?? '').trim()
+    return result.length &gt; 50 ? result.substring(0, 50) : result
+  }
+}
+
+export class UserController {
+  renameUser(userId: number, newName: string): void {
+    const user = this.getUserFromDatabase(userId)
+    user.name = newName                          // 一个目标，一个操作
+    this.saveUserToDatabase(user)
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 5.6 · 仓库 <code>code/Book/Chapter5/Listing6/Listing6.cs</code></p>
+
+<div class="box tip">
+  <div class="t">&#128161; 判断是否泄漏的经验法则</div>
+  <p>
+    <strong>如果客户端为了达成一个目标，需要在这个类上调用不止一个操作，那这个类很可能泄漏了实现细节。</strong>
+    理想情况下，一个目标应该用一个操作就能完成。上面的例子里，修复前是两步，修复后是一步。
+    （这和第 3 章「执行段应该只有一行」是同一件事的两面。）
+  </p>
+</div>
+
+<h3>设计良好的 API 与封装</h3>
+
+<p>
+  泄漏实现细节和破坏不变量总是如影随形：原来那个 <code>User</code> 不仅泄漏了细节，还没守住封装 ——
+  客户端完全可以绕过规范化，直接塞一个 200 字符的名字进去。
+</p>
+
+<p>
+  为什么封装对长期可维护性这么关键？因为<strong>复杂度</strong>。如果代码的 API 不能引导你「什么能做、什么不能做」，
+  你就得把大量信息记在脑子里，才能保证新改动不引入不一致。你不可能永远做对 ——
+  <strong>所以，把做错的可能性本身消除掉。</strong>封装和单元测试服务于同一个目标：让项目可持续地增长。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; Tell-Don't-Ask（告诉，别询问）</div>
+  <p>
+    Martin Fowler 提出的原则：把数据和操作这些数据的函数捆在一起。可以把它看作封装的推论 ——
+    <strong>隐藏实现细节</strong>让类的内部不暴露在客户端面前，减少被破坏的风险；
+    <strong>捆绑数据和操作</strong>确保这些操作不会违反类的不变量。
+  </p>
+</div>
+
+<h3>例子二：泄漏了一个「状态」</h3>
+
+<p>
+  还记得第 4 章的 <code>MessageRenderer</code> 吗？它那个公开的 <code>subRenderers</code> 集合就是泄漏出来的<strong>状态</strong>。
+  客户端的目标是渲染 HTML，它只需要 <code>render()</code> 方法。
+  第 4 章那个脆弱的测试之所以脆弱，恰恰因为它绑在了这个泄漏的细节上。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 好的 API 设计会自动改善测试</div>
+  <p>
+    把所有实现细节设为私有之后，你的测试<strong>别无选择</strong>，只能去验证代码的可观察行为 —— 它们的抵抗重构能力自动就上去了。
+    由此还能得出一条准则：<strong>只暴露绝对最少的操作和状态。</strong>
+  </p>
+</div>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>可观察行为</th><th>实现细节</th></tr>
+  <tr><td><strong>公开</strong></td><td style="color:var(--green);font-weight:700">好</td><td style="color:var(--red);font-weight:700">坏（泄漏）</td></tr>
+  <tr><td><strong>私有</strong></td><td>不存在这种情况 <span style="color:var(--fg-faint)">（藏起来之后客户端用不到，按定义它就不再是可观察行为了）</span></td><td style="color:var(--green);font-weight:700">好</td></tr>
+</table>
+</div>
+
+<h2 id="hexagon">六边形架构</h2>
+
+<p>一个典型的应用由两层组成：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 320" role="img" aria-label="六边形架构：应用由内层的领域层和外层的应用服务层组成，外部应用只能通过应用服务层与它交互">
+  <polygon class="bx-b" points="520,160 450,281 310,281 240,160 310,39 450,39"/>
+  <polygon class="bx-a" points="455,160 418,225 342,225 305,160 342,95 418,95"/>
+  <text class="ttl on-a" x="380" y="156" text-anchor="middle">领域层</text>
+  <text class="sm" x="380" y="174" text-anchor="middle">业务逻辑</text>
+  <text class="ttl on-b" x="380" y="66" text-anchor="middle">应用服务层</text>
+  <text class="sm" x="380" y="262" text-anchor="middle">协调领域层与外部世界</text>
+
+  <polygon class="bx" points="120,60 95,103 45,103 20,60 45,17 95,17"/>
+  <text class="lbl" x="70" y="56" text-anchor="middle">消息</text><text class="lbl" x="70" y="74" text-anchor="middle">总线</text>
+  <polygon class="bx" points="120,260 95,303 45,303 20,260 45,217 95,217"/>
+  <text class="lbl" x="70" y="256" text-anchor="middle">SMTP</text><text class="lbl" x="70" y="274" text-anchor="middle">服务</text>
+  <polygon class="bx" points="740,160 715,203 665,203 640,160 665,117 715,117"/>
+  <text class="lbl" x="690" y="156" text-anchor="middle">第三方</text><text class="lbl" x="690" y="174" text-anchor="middle">系统</text>
+
+  <path class="ln" d="M112 82 L262 130" marker-end="url(#ar)" marker-start="url(#ar)"/>
+  <path class="ln" d="M112 238 L262 190" marker-end="url(#ar)" marker-start="url(#ar)"/>
+  <path class="ln" d="M636 160 H524" marker-end="url(#ar)" marker-start="url(#ar)"/>
+
+  <path class="ln-a" d="M546 62 L440 128" marker-end="url(#ar-a)"/>
+  <text class="sm on-a" x="552" y="52">依赖只能由外向内：</text>
+  <text class="sm on-a" x="552" y="68">应用服务层 &rarr; 领域层</text>
+  <text class="sm" x="590" y="270">每个六边形是一个应用；</text>
+  <text class="sm" x="590" y="286">一组互相交互的六边形</text>
+  <text class="sm" x="590" y="302">就是「六边形架构」</text>
+</svg>
+<figcaption>图 5-5　六边形架构。六条边没有特殊含义，只是表示可以有很多个对外的连接</figcaption>
+</figure>
+
+<div class="tw">
+<table>
+  <tr><th>层</th><th>职责</th><th>可以这样理解</th></tr>
+  <tr><td><strong>领域层</strong>（domain）</td><td>业务逻辑 —— 应用存在的根本原因，也是它区别于其他应用的地方</td><td>领域知识的集合：<strong>怎么做</strong>（how-to）</td></tr>
+  <tr><td><strong>应用服务层</strong>（application services）</td><td>在领域层和外部世界之间协调：从数据库取数据、调用领域对象、保存结果</td><td>业务用例的集合：<strong>做什么</strong>（what-to）</td></tr>
+</table>
+</div>
+
+<p>这个由 Alistair Cockburn 提出的架构强调三点：</p>
+
+<ol class="steps">
+  <li><strong>领域层和应用服务层的关注点分离。</strong>领域层只负责业务逻辑，不管别的；应用服务层不包含任何业务逻辑，只负责「翻译」和「协调」。</li>
+  <li><strong>应用内部的依赖单向流动：从应用服务层指向领域层。</strong>领域层的类只能依赖彼此，不能依赖应用服务层。领域层应该与外部世界完全隔离。</li>
+  <li><strong>外部应用通过应用服务层维护的公共接口连接进来。</strong>谁都不能直接访问领域层。</li>
+</ol>
+
+<h3>可观察行为是分形的</h3>
+
+<p>
+  每一层都有自己的可观察行为和实现细节。「设计良好的 API」这个原则是<strong>分形</strong>的：对一整层成立，对一个类同样成立。
+  当每一层都隐藏了自己的实现细节时，测试也会呈现出分形结构：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="外部客户端的目标由应用服务完成，应用服务把它拆成子目标交给领域类。每一层的测试验证这一层的目标">
+  <rect class="bx" x="300" y="14" width="160" height="40" rx="8"/><text class="ttl" x="380" y="39" text-anchor="middle">外部客户端</text>
+  <path class="ln-a" d="M380 56 V102" marker-end="url(#ar-a)"/>
+  <text class="lbl on-a" x="392" y="78">目标（用例）</text>
+  <text class="sm" x="392" y="94">「我要买 5 瓶洗发水」</text>
+
+  <rect class="bx-b" x="290" y="106" width="180" height="44" rx="8"/><text class="ttl on-b" x="380" y="133" text-anchor="middle">应用服务</text>
+  <path class="ln-a" d="M340 152 L250 202" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M420 152 L510 202" marker-end="url(#ar-a)"/>
+  <text class="sm on-a" x="262" y="172" text-anchor="end">子目标</text>
+  <text class="sm on-a" x="498" y="172">子目标</text>
+
+  <rect class="bx-a" x="150" y="206" width="180" height="44" rx="8"/><text class="lbl on-a" x="240" y="233" text-anchor="middle">领域类 1</text>
+  <rect class="bx-a" x="430" y="206" width="180" height="44" rx="8"/><text class="lbl on-a" x="520" y="233" text-anchor="middle">领域类 2</text>
+
+  <rect class="bx-g" x="30" y="60" width="130" height="36" rx="18"/><text class="lbl on-g" x="95" y="83" text-anchor="middle">测试 1</text>
+  <path class="ln-g" d="M162 78 C230 78 250 100 286 118" marker-end="url(#ar-g)"/>
+  <text class="sm" x="95" y="114" text-anchor="middle">验证整个用例</text>
+
+  <rect class="bx-g" x="10" y="210" width="110" height="36" rx="18"/><text class="lbl on-g" x="65" y="233" text-anchor="middle">测试 2</text>
+  <path class="ln-g" d="M122 228 H146" marker-end="url(#ar-g)"/>
+  <rect class="bx-g" x="640" y="210" width="110" height="36" rx="18"/><text class="lbl on-g" x="695" y="233" text-anchor="middle">测试 3</text>
+  <path class="ln-g" d="M638 228 H614" marker-end="url(#ar-g)"/>
+  <text class="sm" x="380" y="278" text-anchor="middle">测试 2、3 验证的是通往同一个大目标路上的中间子目标 —— 所以每个测试都能追溯到一条业务需求</text>
+</svg>
+<figcaption>图 5-6　目标从外向内逐层分解，测试在每一层验证相应层级的目标</figcaption>
+</figure>
+
+<p>
+  对领域类来说，客户端是应用服务；对应用服务来说，客户端是外部调用者。
+  可观察行为从外层向中心流动，每一层的可观察行为都保持着和某个业务用例的联系。
+  这就解释了前面反复强调的那句话：<strong>每个测试都应该能追溯到一条业务需求；追溯不到，就说明它绑在了实现细节上。</strong>
+</p>
+
+<h2 id="comm">系统内通信 vs. 系统间通信</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="六边形内部类与类之间的通信是系统内通信，属于实现细节；六边形与外部应用之间的通信是系统间通信，属于可观察行为，是必须遵守的契约">
+  <polygon class="bx" points="560,150 490,271 350,271 280,150 350,29 490,29"/>
+  <rect class="bx-a" x="340" y="80" width="90" height="38" rx="7"/><text class="lbl on-a" x="385" y="104" text-anchor="middle">类 A</text>
+  <rect class="bx-a" x="420" y="180" width="90" height="38" rx="7"/><text class="lbl on-a" x="465" y="204" text-anchor="middle">类 B</text>
+  <path class="ln-d" d="M400 120 L448 176" marker-end="url(#ar)" style="stroke:var(--accent)"/>
+  <text class="lbl on-a" x="298" y="152">系统内通信</text>
+  <text class="sm" x="298" y="170">= 实现细节</text>
+
+  <rect class="bx-b" x="20" y="50" width="150" height="50" rx="10"/><text class="lbl on-b" x="95" y="80" text-anchor="middle">第三方系统</text>
+  <rect class="bx-b" x="20" y="200" width="150" height="50" rx="10"/><text class="lbl on-b" x="95" y="230" text-anchor="middle">SMTP 服务</text>
+  <path class="ln-b" style="stroke-width:2.4" d="M172 80 L300 118" marker-end="url(#ar-b)" marker-start="url(#ar-b)"/>
+  <path class="ln-b" style="stroke-width:2.4" d="M300 184 L174 220" marker-end="url(#ar-b)"/>
+  <text class="lbl on-b" x="180" y="140">系统间通信</text>
+  <text class="sm" x="180" y="158">= 可观察行为（契约）</text>
+
+  <rect class="bx-g" x="580" y="30" width="170" height="104" rx="10"/>
+  <text class="ttl on-g" x="592" y="54">&#10003; 该用 Mock</text>
+  <text class="sm" x="592" y="76">跨越应用边界的蓝色箭头。</text>
+  <text class="sm" x="592" y="94">重构后这些调用必须</text>
+  <text class="sm" x="592" y="112">原样保留，值得验证</text>
+
+  <rect class="bx-r" x="580" y="166" width="170" height="104" rx="10"/>
+  <text class="ttl on-r" x="592" y="190">&#10007; 不该用 Mock</text>
+  <text class="sm" x="592" y="212">六边形内部的橙色虚线。</text>
+  <text class="sm" x="592" y="230">类之间怎么协作随时</text>
+  <text class="sm" x="592" y="248">可以改，验证它 = 脆弱</text>
+</svg>
+<figcaption>图 5-7　本章的核心结论，一张图说完</figcaption>
+</figure>
+
+<p>
+  <strong>为什么系统内通信是实现细节？</strong>领域类为了完成一个操作而彼此协作的方式，不属于它们的可观察行为，和客户端的目标没有直接联系。
+</p>
+<p>
+  <strong>为什么系统间通信不是？</strong>你的系统如何与外部世界对话，构成了系统作为一个整体的可观察行为，是它必须始终遵守的<strong>契约</strong>。
+  根源在于各个应用是<strong>各自独立演进</strong>的，必须保持<strong>向后兼容</strong>：不管你内部怎么重构，发到消息总线上的消息结构不能变，
+  调用 SMTP 服务的参数个数和类型不能变 —— 否则外部应用就看不懂了。
+</p>
+
+<h3>实例：一次购买</h3>
+
+<p>业务用例：顾客尝试从商店购买商品。如果库存足够，则 ① 从商店扣除库存；② 给顾客发一封收据邮件；③ 返回确认。</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class CustomerController {
+    private final CustomerRepository customerRepository;
+    private final ProductRepository productRepository;
+    private final Store mainStore;
+    private final IEmailGateway emailGateway;
+    /* 构造函数略 */
+
+    public boolean purchase(int customerId, int productId, int quantity) {
+        Customer customer = customerRepository.getById(customerId);
+        Product product = productRepository.getById(productId);
+
+        boolean isSuccess = customer.purchase(mainStore, product, quantity);
+
+        if (isSuccess) {
+            emailGateway.sendReceipt(customer.getEmail(), product.getName(), quantity);
+        }
+        return isSuccess;
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class CustomerController:
+    def __init__(self, customer_repository, product_repository,
+                 main_store: Store, email_gateway: EmailGateway) -&gt; None:
+        self._customer_repository = customer_repository
+        self._product_repository = product_repository
+        self._main_store = main_store
+        self._email_gateway = email_gateway
+
+    def purchase(self, customer_id: int, product_id: int, quantity: int) -&gt; bool:
+        customer = self._customer_repository.get_by_id(customer_id)
+        product = self._product_repository.get_by_id(product_id)
+
+        is_success = customer.purchase(self._main_store, product, quantity)
+
+        if is_success:
+            self._email_gateway.send_receipt(customer.email, product.name, quantity)
+        return is_success
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class CustomerController {
+  constructor(
+    private customerRepository: CustomerRepository,
+    private productRepository: ProductRepository,
+    private mainStore: Store,
+    private emailGateway: IEmailGateway,
+  ) {}
+
+  purchase(customerId: number, productId: number, quantity: number): boolean {
+    const customer = this.customerRepository.getById(customerId)
+    const product = this.productRepository.getById(productId)
+
+    const isSuccess = customer.purchase(this.mainStore, product, quantity)
+
+    if (isSuccess) {
+      this.emailGateway.sendReceipt(customer.email, product.name, quantity)
+    }
+    return isSuccess
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 5.9 · 仓库 <code>code/Book/Chapter5/Listing9/CustomerControllerTests.cs</code></p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="购买用例画在六边形上：第三方系统调用应用并得到 isSuccess，应用调用 SMTP 服务发送收据，这两条是系统间通信；六边形内部 Customer 调用 Store 的 removeInventory 是系统内通信">
+  <polygon class="bx" points="620,150 545,280 395,280 320,150 395,20 545,20"/>
+  <rect class="bx-a" x="400" y="70" width="140" height="44" rx="8"/><text class="lbl on-a" x="470" y="97" text-anchor="middle">Customer</text>
+  <rect class="bx-a" x="400" y="190" width="140" height="44" rx="8"/><text class="lbl on-a" x="470" y="217" text-anchor="middle">Store</text>
+  <path class="ln-d" d="M470 116 V186" marker-end="url(#ar-a)" style="stroke:var(--accent)"/>
+  <text class="mono sm" x="478" y="148">removeInventory()</text>
+  <text class="sm on-r" x="478" y="166">系统内 · 不要 Mock</text>
+
+  <rect class="bx-b" x="20" y="40" width="170" height="64" rx="10"/>
+  <text class="lbl on-b" x="105" y="66" text-anchor="middle">第三方系统</text>
+  <text class="sm" x="105" y="86" text-anchor="middle">（发起用例的外部客户端）</text>
+  <path class="ln-b" style="stroke-width:2.2" d="M192 62 L396 84" marker-end="url(#ar-b)"/>
+  <path class="ln-b" style="stroke-width:2.2" d="M396 100 L194 86" marker-end="url(#ar-b)"/>
+  <text class="mono sm" x="280" y="60" text-anchor="middle">purchase()</text>
+  <text class="mono sm" x="270" y="112" text-anchor="middle">isSuccess</text>
+
+  <rect class="bx-b" x="20" y="200" width="170" height="54" rx="10"/>
+  <text class="lbl on-b" x="105" y="232" text-anchor="middle">SMTP 服务</text>
+  <path class="ln-b" style="stroke-width:2.2" d="M340 190 L194 220" marker-end="url(#ar-b)"/>
+  <text class="mono sm" x="250" y="188" text-anchor="middle">sendReceipt()</text>
+  <text class="sm on-g" x="268" y="236" text-anchor="middle">系统间 · 该用 Mock</text>
+
+  <text class="sm" x="660" y="150">应用的</text>
+  <text class="sm" x="660" y="166">边界</text>
+</svg>
+<figcaption>图 5-8　同一个用例里既有系统间通信（蓝色实线），也有系统内通信（橙色虚线）</figcaption>
+</figure>
+
+<p><strong>&#10003; 合理地使用 Mock</strong> —— 验证对 SMTP 服务的调用：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✓ 不会导致脆弱测试的 Mock"><pre>
+@Test
+void successful_purchase() {
+    IEmailGateway mock = mock(IEmailGateway.class);
+    var sut = new CustomerController(/* ... */ mock);
+
+    boolean isSuccess = sut.purchase(1, 2, 5);   // customerId, productId, quantity
+
+    assertThat(isSuccess).isTrue();
+    verify(mock, times(1))                       // 验证系统发出了购买收据
+        .sendReceipt("customer@email.com", "Shampoo", 5);
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✓ 不会导致脆弱测试的 Mock"><pre>
+def test_successful_purchase():
+    mock = Mock(spec=EmailGateway)
+    sut = create_controller(email_gateway=mock)
+
+    is_success = sut.purchase(customer_id=1, product_id=2, quantity=5)
+
+    assert is_success is True
+    mock.send_receipt.assert_called_once_with(   # 验证系统发出了购买收据
+        "customer@email.com", "Shampoo", 5)
+</pre></div>
+<div class="code" data-lang="ts" data-file="✓ 不会导致脆弱测试的 Mock"><pre>
+test('successful purchase', () =&gt; {
+  const mock: IEmailGateway = { sendReceipt: vi.fn() }
+  const sut = createController({ emailGateway: mock })
+
+  const isSuccess = sut.purchase(1, 2, 5)   // customerId, productId, quantity
+
+  expect(isSuccess).toBe(true)
+  expect(mock.sendReceipt).toHaveBeenCalledOnce()   // 验证系统发出了购买收据
+  expect(mock.sendReceipt).toHaveBeenCalledWith('customer@email.com', 'Shampoo', 5)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 5.10</p>
+
+<p>
+  发邮件是一个<strong>外部世界看得见的副作用</strong>，客户端（第三方系统）期望顾客在购买成功后收到确认邮件。
+  这种通信无论怎么重构都必须保留，用 Mock 验证它不会让测试变脆弱。
+  （<code>isSuccess</code> 也是外部可见的，同样要验证，不过它用普通的值比较就行，不需要 Mock。）
+</p>
+
+<p><strong>&#10007; 不合理地使用 Mock</strong> —— 验证 <code>Customer</code> 对 <code>Store</code> 的调用（就是第 2 章伦敦风格的那个测试）：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✗ 导致脆弱测试的 Mock"><pre>
+@Test
+void purchase_succeeds_when_enough_inventory() {
+    IStore storeMock = mock(IStore.class);
+    when(storeMock.hasEnoughInventory(Product.SHAMPOO, 5)).thenReturn(true);
+    var customer = new Customer();
+
+    boolean success = customer.purchase(storeMock, Product.SHAMPOO, 5);
+
+    assertThat(success).isTrue();
+    verify(storeMock, times(1)).removeInventory(Product.SHAMPOO, 5);   // ✗ 系统内通信
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✗ 导致脆弱测试的 Mock"><pre>
+def test_purchase_succeeds_when_enough_inventory():
+    store_mock = Mock(spec=Store)
+    store_mock.has_enough_inventory.return_value = True
+    customer = Customer()
+
+    success = customer.purchase(store_mock, Product.SHAMPOO, 5)
+
+    assert success is True
+    store_mock.remove_inventory.assert_called_once_with(Product.SHAMPOO, 5)   # ✗ 系统内通信
+</pre></div>
+<div class="code" data-lang="ts" data-file="✗ 导致脆弱测试的 Mock"><pre>
+test('purchase succeeds when enough inventory', () =&gt; {
+  const storeMock = createStoreMock(true)
+  const customer = new Customer()
+
+  const success = customer.purchase(storeMock, Product.Shampoo, 5)
+
+  expect(success).toBe(true)
+  expect(storeMock.removeInventory).toHaveBeenCalledWith(Product.Shampoo, 5)   // ✗ 系统内通信
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 5.11</p>
+
+<p>
+  <code>removeInventory()</code> 这个调用没有跨越应用边界：调用方和被调用方都在应用内部。它也不是帮助客户端达成目标的操作或状态。
+  这两个领域类的客户端是 <code>CustomerController</code>，目标是「完成一次购买」。和这个目标直接相关的只有两个成员：
+  <code>customer.purchase()</code>（发起购买）和 <code>store.getInventory()</code>（查看购买完成后的状态）。
+  <code>removeInventory()</code> 只是通往目标路上的一个中间步骤 —— <strong>实现细节</strong>。
+</p>
+
+<h2 id="schools">重新审视两个学派</h2>
+
+<p>
+  现在可以说清楚为什么本教程偏向经典学派了。<strong>伦敦学派</strong>鼓励对除不可变依赖以外的一切使用 Mock，
+  而且<strong>不区分</strong>系统内通信和系统间通信。于是测试既检查类与类之间的通信，也检查应用与外部系统的通信 ——
+  前者让测试和实现细节耦合，丧失抵抗重构的能力。而这项指标基本是二元的，丢了它，测试就近乎一文不值。
+</p>
+
+<p>
+  <strong>经典学派</strong>好得多：它只主张替换测试之间共享的依赖，而这几乎总是进程外依赖（SMTP 服务、消息总线等）。
+  但它对系统间通信的处理也不完美 —— 它同样鼓励了过度使用 Mock，只是程度轻一些。
+</p>
+
+<h3>不是所有进程外依赖都该 Mock</h3>
+
+<div class="box key">
+  <div class="t">&#9733; 关键细分</div>
+  <p>
+    如果一个进程外依赖<strong>只能通过你的应用来访问</strong>，那么与它的通信就不属于你系统的可观察行为。
+    一个从外部观察不到的进程外依赖，实际上就是<strong>你应用的一部分</strong>。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="只有应用自己能访问的数据库实际上属于应用的一部分，与它的通信是实现细节；SMTP 服务对外可见，与它的通信是可观察行为">
+  <rect class="bx-d" x="290" y="20" width="450" height="250" rx="14" style="stroke:var(--accent);fill:none"/>
+  <text class="sm on-a" x="728" y="40" text-anchor="end">从外部看，这一整块是一个系统</text>
+
+  <polygon class="bx" points="500,150 450,237 350,237 300,150 350,63 450,63"/>
+  <text class="ttl" x="400" y="146" text-anchor="middle">你的应用</text>
+  <text class="sm" x="400" y="166" text-anchor="middle">（六边形）</text>
+
+  <rect class="bx-a" x="570" y="110" width="150" height="80" rx="10"/>
+  <text class="ttl on-a" x="645" y="138" text-anchor="middle">应用数据库</text>
+  <text class="sm" x="645" y="158" text-anchor="middle">只有本应用能访问</text>
+  <text class="sm" x="645" y="174" text-anchor="middle">外部根本看不见它</text>
+  <path class="ln-d" d="M504 150 H566" marker-end="url(#ar-a)" marker-start="url(#ar-a)" style="stroke:var(--accent)"/>
+  <text class="sm on-a" x="535" y="212" text-anchor="middle">实现细节</text>
+  <text class="sm on-r" x="535" y="228" text-anchor="middle">不要 Mock</text>
+
+  <rect class="bx-b" x="20" y="50" width="170" height="60" rx="10"/>
+  <text class="lbl on-b" x="105" y="76" text-anchor="middle">第三方系统</text>
+  <text class="sm" x="105" y="94" text-anchor="middle">（外部客户端）</text>
+  <rect class="bx-b" x="20" y="190" width="170" height="60" rx="10"/>
+  <text class="lbl on-b" x="105" y="225" text-anchor="middle">SMTP 服务</text>
+  <path class="ln-b" style="stroke-width:2.2" d="M192 84 L316 124" marker-end="url(#ar-b)" marker-start="url(#ar-b)"/>
+  <path class="ln-b" style="stroke-width:2.2" d="M316 178 L194 216" marker-end="url(#ar-b)"/>
+  <text class="sm on-b" x="222" y="148" text-anchor="middle">可观察行为（契约）</text>
+  <text class="sm on-g" x="222" y="164" text-anchor="middle">可以 Mock</text>
+</svg>
+<figcaption>图 5-9　只有你的应用能访问的数据库，应当和应用被看作一个整体</figcaption>
+</figure>
+
+<p>
+  必须保持与外部系统的通信模式，是因为你<strong>没法让它们和你的应用同时变更</strong>：它们有自己的发布节奏，或者干脆不归你管。
+  但如果你的应用是某个外部系统的唯一入口，没有任何客户端能直接访问它，向后兼容的要求就消失了 ——
+  你可以把它和应用一起部署，客户端毫无感知。
+</p>
+
+<p>
+  <strong>应用数据库</strong>就是典型例子。你想拆表、改存储过程的参数类型，甚至整个换成另一种存储机制，都没有人会发现。
+  给这种依赖用 Mock，同样会导致脆弱的测试 —— 你不会希望每次拆一张表，测试就红一片。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 那数据库怎么测？</div>
+  <p>
+    不 Mock 数据库，又不想牺牲反馈速度，怎么办？这是接下来几章的主题：
+    第 6、7 章讲怎么把业务逻辑和数据库访问分开，让大部分测试根本不碰数据库；第 8、10 章讲怎么用真的数据库写集成测试。
+  </p>
+</div>
+
+<h3>「Mock 验证的是行为」？多数时候不是</h3>
+
+<div class="box deep">
+  <div class="t">&#129504; 神经元的比喻</div>
+  <p>
+    常听人说 Mock 是用来「验证行为」的。绝大多数情况下并不是。每个类为了达成目标如何与相邻的类交互，和可观察行为没有关系，那是实现细节。
+  </p>
+  <p>
+    验证类与类之间的通信，就好比<strong>通过测量大脑里神经元之间传递的信号来推断一个人的行为</strong>。这个粒度太细了。
+    别人请你帮忙时，并不关心你脑子里哪些神经元亮了，他只关心你帮没帮上。
+  </p>
+  <p>
+    <strong>只有当 Mock 验证的是跨越应用边界的交互，并且这些交互的副作用对外部世界可见时，它才和行为有关。</strong>
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>测试替身有五种（dummy、stub、spy、mock、fake），归为两类：<strong>Mock</strong>（mock、spy）和 <strong>Stub</strong>（stub、dummy、fake）。</li>
+  <li>Mock 模拟并检查<strong>向外的交互</strong>（SUT 调用依赖以改变其状态）；Stub 只模拟<strong>向内的交互</strong>（SUT 调用依赖以获取数据）。</li>
+  <li>Mock（工具）是 Mock 库里的类，可以用来创建 Mock（替身），也可以创建 Stub。</li>
+  <li><strong>断言与 Stub 的交互会导致脆弱的测试</strong>：那不是最终结果，而是通往结果的中间步骤。</li>
+  <li>CQS 原则：方法要么是命令，要么是查询。替换命令的替身是 Mock，替换查询的替身是 Stub。</li>
+  <li>代码可按两个维度分类：公开 / 私有 API，可观察行为 / 实现细节。可观察行为 = 暴露了帮助客户端达成目标的操作或状态。</li>
+  <li>设计良好的代码：可观察行为与公开 API 重合，实现细节藏在私有 API 后面。</li>
+  <li>封装是保护代码不被破坏不变量。泄漏实现细节往往意味着封装被破坏。</li>
+  <li>六边形架构：每个应用是一个六边形，由领域层和应用服务层组成；依赖单向地从应用服务层指向领域层；外部应用只能通过应用服务层接入。</li>
+  <li><strong>系统内通信是实现细节；系统间通信是可观察行为</strong> —— 只有通过你的应用才能访问的外部系统除外，与它们的交互也是实现细节。</li>
+  <li>用 Mock 断言系统内通信会导致脆弱的测试。<strong>Mock 只在用于系统间通信、且副作用对外可见时才是合理的。</strong></li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>测试里有这样一行：<code>verify(repository).findById(42)</code>。这是好的做法吗？</summary>
+  <p>不是。<code>findById</code> 是查询，替换它的替身是 Stub。断言与 Stub 的交互属于过度指定 —— 它验证的是 SUT 如何获取数据，而不是最终结果。</p>
+</details>
+<details class="quiz">
+  <summary>你的订单服务处理完订单后，会往公司的消息总线上发一条 <code>OrderPlaced</code> 消息，下游有三个团队在消费它。这个调用该不该 Mock？</summary>
+  <p>该。这是跨越应用边界的系统间通信，副作用对外可见，消息的结构是你和其他团队之间的契约，重构后必须保持不变。</p>
+</details>
+<details class="quiz">
+  <summary>一个类有 <code>public calculateTax()</code> 和 <code>public applyTax()</code>，调用方每次都得先调前者再把结果传给后者。问题在哪？</summary>
+  <p>客户端为了一个目标（让订单含税）需要调两个操作，说明 <code>calculateTax</code> 很可能是泄漏的实现细节。应该让 <code>applyTax()</code> 内部自己去算。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>实现本章的 <code>CustomerController</code> 及相关类，写出「合理的 Mock」那个测试。
+        然后把 <code>Customer.purchase</code> 的内部实现换一种写法（比如不调用 <code>hasEnoughInventory</code>），确认测试依然是绿的。</li>
+    <li>在你的项目里搜索所有 <code>verify</code> / <code>assert_called</code> / <code>toHaveBeenCalled</code>。
+        给每一处标上：被验证的调用是系统内的还是系统间的？是命令还是查询？</li>
+    <li>挑一个你写的类，列出它所有的公开成员。对每一个问：它直接帮助了哪个客户端达成哪个目标？答不上来的，考虑把它设为私有。</li>
+    <li>画出你当前项目的「六边形」：中间是什么？有哪些外部系统？哪些是只有你的应用才能访问的？</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,923 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 2 章 · 什么是单元测试 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="2">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 2 章</span>
+<h1>什么是单元测试</h1>
+<p class="lede">
+  「单元测试」这四个字听起来人人都懂，但对其中一个词的不同理解，把整个社区分成了两派。
+  搞清楚这个分歧，你才能看懂后面关于 Mock 的所有讨论。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>背下单元测试的三个特征，并知道哪一个有争议</li>
+    <li>区分<strong>共享依赖、私有依赖、进程外依赖、易变依赖</strong>这几个容易混的词</li>
+    <li>看懂同一个功能用<strong>经典学派</strong>和<strong>伦敦学派</strong>分别怎么测</li>
+    <li>理解为什么本教程站在经典学派一边</li>
+    <li>分清单元测试、集成测试、端到端测试</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="definition">单元测试的定义</h2>
+
+<p>定义有很多版本，去掉枝节后都包含这三点。单元测试是一种自动化测试，它：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 190" role="img" aria-label="单元测试的三个特征：验证一小段代码、运行得快、以隔离的方式进行。第三点有争议">
+  <rect class="bx" x="20" y="24" width="220" height="92" rx="10"/>
+  <text class="ttl" x="130" y="52" text-anchor="middle">① 验证一小段代码</text>
+  <text class="sm" x="130" y="74" text-anchor="middle">这一小段也叫「单元」</text>
+  <text class="sm" x="130" y="94" text-anchor="middle">多小算小？下面会展开</text>
+
+  <rect class="bx" x="270" y="24" width="220" height="92" rx="10"/>
+  <text class="ttl" x="380" y="52" text-anchor="middle">② 运行得快</text>
+  <text class="sm" x="380" y="74" text-anchor="middle">多快算快比较主观</text>
+  <text class="sm" x="380" y="94" text-anchor="middle">你觉得够快就是够快</text>
+
+  <rect class="bx-a" x="520" y="24" width="220" height="92" rx="10"/>
+  <text class="ttl on-a" x="630" y="52" text-anchor="middle">③ 以隔离的方式进行</text>
+  <text class="sm" x="630" y="74" text-anchor="middle">「隔离」到底指什么？</text>
+  <text class="sm on-a" x="630" y="94" text-anchor="middle">&#9889; 争议就在这里</text>
+
+  <path class="ln-a" d="M630 118 V140 H470" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M470 140 H290" style="stroke-dasharray:4 4"/>
+  <text class="lbl" x="380" y="172" text-anchor="middle">对第 ③ 点的不同解读，产生了两个学派；它们对第 ① 点的看法也因此不同</text>
+</svg>
+<figcaption>图 2-1　单元测试的三个特征。前两个基本没争议，第三个是所有分歧的源头</figcaption>
+</figure>
+
+<div class="tw">
+<table>
+  <tr><th>学派</th><th>别名</th><th>代表作</th></tr>
+  <tr><td><strong>经典学派</strong>（Classical）</td><td>底特律学派（Detroit）</td><td>Kent Beck《测试驱动开发：实战与模式解析》</td></tr>
+  <tr><td><strong>伦敦学派</strong>（London）</td><td>Mockist（爱用 Mock 的人，不过他们自己不太喜欢这个叫法）</td><td>Freeman &amp; Pryce《测试驱动的面向对象软件开发》</td></tr>
+</table>
+</div>
+
+<h2 id="example">贯穿本章的例子：网上商店</h2>
+
+<p>
+  一个极简的场景：顾客在商店买东西。<strong>库存够</strong>，购买成功，库存减去购买数量；
+  <strong>库存不够</strong>，购买失败，库存不变。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public enum Product { SHAMPOO, BOOK }
+
+public class Store {
+    private final Map&lt;Product, Integer&gt; inventory = new HashMap&lt;&gt;();
+
+    public boolean hasEnoughInventory(Product product, int quantity) {
+        return getInventory(product) &gt;= quantity;
+    }
+
+    public void removeInventory(Product product, int quantity) {
+        if (!hasEnoughInventory(product, quantity)) {
+            throw new IllegalStateException("Not enough inventory");
+        }
+        inventory.merge(product, -quantity, Integer::sum);
+    }
+
+    public void addInventory(Product product, int quantity) {
+        inventory.merge(product, quantity, Integer::sum);
+    }
+
+    public int getInventory(Product product) {
+        return inventory.getOrDefault(product, 0);
+    }
+}
+
+public class Customer {
+    public boolean purchase(Store store, Product product, int quantity) {
+        if (!store.hasEnoughInventory(product, quantity)) {
+            return false;
+        }
+        store.removeInventory(product, quantity);
+        return true;
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+from enum import Enum
+
+
+class Product(Enum):
+    SHAMPOO = "shampoo"
+    BOOK = "book"
+
+
+class Store:
+    def __init__(self) -&gt; None:
+        self._inventory: dict[Product, int] = {}
+
+    def has_enough_inventory(self, product: Product, quantity: int) -&gt; bool:
+        return self.get_inventory(product) &gt;= quantity
+
+    def remove_inventory(self, product: Product, quantity: int) -&gt; None:
+        if not self.has_enough_inventory(product, quantity):
+            raise ValueError("Not enough inventory")
+        self._inventory[product] -= quantity
+
+    def add_inventory(self, product: Product, quantity: int) -&gt; None:
+        self._inventory[product] = self.get_inventory(product) + quantity
+
+    def get_inventory(self, product: Product) -&gt; int:
+        return self._inventory.get(product, 0)
+
+
+class Customer:
+    def purchase(self, store: Store, product: Product, quantity: int) -&gt; bool:
+        if not store.has_enough_inventory(product, quantity):
+            return False
+        store.remove_inventory(product, quantity)
+        return True
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export enum Product { Shampoo = 'shampoo', Book = 'book' }
+
+export class Store {
+  private inventory = new Map&lt;Product, number&gt;()
+
+  hasEnoughInventory(product: Product, quantity: number): boolean {
+    return this.getInventory(product) &gt;= quantity
+  }
+
+  removeInventory(product: Product, quantity: number): void {
+    if (!this.hasEnoughInventory(product, quantity)) {
+      throw new Error('Not enough inventory')
+    }
+    this.inventory.set(product, this.getInventory(product) - quantity)
+  }
+
+  addInventory(product: Product, quantity: number): void {
+    this.inventory.set(product, this.getInventory(product) + quantity)
+  }
+
+  getInventory(product: Product): number {
+    return this.inventory.get(product) ?? 0
+  }
+}
+
+export class Customer {
+  purchase(store: Store, product: Product, quantity: number): boolean {
+    if (!store.hasEnoughInventory(product, quantity)) {
+      return false
+    }
+    store.removeInventory(product, quantity)
+    return true
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应仓库 <code>code/Book/Chapter2/Listing1/Other.cs</code></p>
+
+<p>先记住三个贯穿全书的缩写：</p>
+
+<div class="tw">
+<table>
+  <tr><th>术语</th><th>含义</th><th>本例中</th></tr>
+  <tr><td><strong>SUT</strong>（System Under Test，被测系统）</td><td>这个测试要验证的那个类</td><td><code>Customer</code></td></tr>
+  <tr><td><strong>MUT</strong>（Method Under Test，被测方法）</td><td>测试调用的 SUT 上的那个方法</td><td><code>purchase()</code></td></tr>
+  <tr><td><strong>协作者</strong>（Collaborator）</td><td>SUT 要与之配合的、状态会变的依赖</td><td><code>Store</code></td></tr>
+</table>
+</div>
+
+<h2 id="london">伦敦学派：把被测代码和协作者隔开</h2>
+
+<p>
+  伦敦学派对「隔离」的理解是：<strong>把被测系统和它的协作者隔离开</strong>。
+  一个类如果依赖别的类，测试时就把这些依赖全部换成<strong>测试替身</strong>。
+</p>
+
+<div class="term">
+  <b class="w">测试替身（test double）</b>
+  <p>外表和行为都像真实依赖、但其实是简化版的对象，用来降低复杂度、方便测试。这个名字来自电影里的「特技替身」（stunt double）。</p>
+</div>
+<div class="term">
+  <b class="w">Mock</b>
+  <p>测试替身的一种，特点是可以让你检查 SUT 和协作者之间的<strong>交互</strong>（调没调、调了几次、传了什么参数）。
+     很多人把 Mock 和测试替身当同义词，严格来说 Mock 只是其中一类（第 5 章细讲）。</p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="伦敦学派把被测系统的每个依赖都替换成测试替身">
+  <text class="ttl" x="180" y="24" text-anchor="middle">生产环境中</text>
+  <rect class="bx-a" x="30" y="80" width="130" height="50" rx="10"/>
+  <text class="ttl on-a" x="95" y="110" text-anchor="middle">被测系统</text>
+  <rect class="bx-b" x="220" y="44" width="120" height="42" rx="8"/>
+  <text class="lbl on-b" x="280" y="70" text-anchor="middle">依赖 1</text>
+  <rect class="bx-b" x="220" y="124" width="120" height="42" rx="8"/>
+  <text class="lbl on-b" x="280" y="150" text-anchor="middle">依赖 2</text>
+  <path class="ln" d="M162 96 L216 70" marker-end="url(#ar)"/>
+  <path class="ln" d="M162 114 L216 140" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M340 65 H372 M340 145 H372"/>
+  <text class="sm" x="180" y="196" text-anchor="middle">依赖还有自己的依赖，层层往下</text>
+
+  <path class="ln" d="M398 20 V220" style="stroke-dasharray:2 5"/>
+
+  <text class="ttl" x="580" y="24" text-anchor="middle">伦敦学派的测试中</text>
+  <rect class="bx-a" x="430" y="80" width="130" height="50" rx="10"/>
+  <text class="ttl on-a" x="495" y="110" text-anchor="middle">被测系统</text>
+  <rect class="bx-d" x="620" y="44" width="120" height="42" rx="8"/>
+  <text class="lbl" x="680" y="70" text-anchor="middle">替身 1</text>
+  <rect class="bx-d" x="620" y="124" width="120" height="42" rx="8"/>
+  <text class="lbl" x="680" y="150" text-anchor="middle">替身 2</text>
+  <path class="ln" d="M562 96 L616 70" marker-end="url(#ar)"/>
+  <path class="ln" d="M562 114 L616 140" marker-end="url(#ar)"/>
+  <text class="sm" x="580" y="196" text-anchor="middle">依赖链在第一层就被切断了</text>
+  <text class="sm" x="580" y="214" text-anchor="middle">测试失败 &rarr; 一定是被测系统的问题</text>
+</svg>
+<figcaption>图 2-2　伦敦学派的隔离：用替身换掉所有协作者，一次只盯一个类</figcaption>
+</figure>
+
+<p>这样做有三个看起来很诱人的好处：</p>
+
+<ul>
+  <li><strong>定位精确。</strong>测试挂了，嫌疑人只有被测类自己。</li>
+  <li><strong>切断对象图。</strong>类依赖类、依赖又有依赖……用替身换掉直接依赖，后面那一长串就都不用管了，准备工作大大减少。</li>
+  <li><strong>结构简单。</strong>可以定一条全项目通用的规矩：一个生产类，对应一个测试类。</li>
+</ul>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 170" role="img" aria-label="伦敦学派的测试结构：每个生产类对应一个测试类">
+  <text class="ttl" x="150" y="24" text-anchor="middle">单元测试</text>
+  <text class="ttl" x="610" y="24" text-anchor="middle">生产代码</text>
+  <rect class="bx-g" x="60" y="38" width="180" height="32" rx="7"/><text class="lbl on-g" x="150" y="59" text-anchor="middle">CustomerTests</text>
+  <rect class="bx-g" x="60" y="82" width="180" height="32" rx="7"/><text class="lbl on-g" x="150" y="103" text-anchor="middle">StoreTests</text>
+  <rect class="bx-g" x="60" y="126" width="180" height="32" rx="7"/><text class="lbl on-g" x="150" y="147" text-anchor="middle">OrderTests</text>
+  <rect class="bx-b" x="520" y="38" width="180" height="32" rx="7"/><text class="lbl on-b" x="610" y="59" text-anchor="middle">Customer</text>
+  <rect class="bx-b" x="520" y="82" width="180" height="32" rx="7"/><text class="lbl on-b" x="610" y="103" text-anchor="middle">Store</text>
+  <rect class="bx-b" x="520" y="126" width="180" height="32" rx="7"/><text class="lbl on-b" x="610" y="147" text-anchor="middle">Order</text>
+  <path class="ln" d="M242 54 H516" marker-end="url(#ar)"/>
+  <path class="ln" d="M242 98 H516" marker-end="url(#ar)"/>
+  <path class="ln" d="M242 142 H516" marker-end="url(#ar)"/>
+  <text class="sm" x="380" y="46" text-anchor="middle">只测它一个</text>
+  <text class="sm" x="380" y="90" text-anchor="middle">只测它一个</text>
+  <text class="sm" x="380" y="134" text-anchor="middle">只测它一个</text>
+</svg>
+<figcaption>图 2-3　伦敦学派：一个类对应一个测试类，一一对应</figcaption>
+</figure>
+
+<h2 id="two-styles">同一个功能，两种写法</h2>
+
+<h3>经典风格：用真的 Store</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="CustomerTests.java（经典风格）"><pre>
+@Test
+void purchase_succeeds_when_enough_inventory() {
+    // Arrange（准备）
+    var store = new Store();
+    store.addInventory(Product.SHAMPOO, 10);
+    var customer = new Customer();
+
+    // Act（执行）
+    boolean success = customer.purchase(store, Product.SHAMPOO, 5);
+
+    // Assert（断言）
+    assertThat(success).isTrue();
+    assertThat(store.getInventory(Product.SHAMPOO)).isEqualTo(5);   // 库存少了 5
+}
+
+@Test
+void purchase_fails_when_not_enough_inventory() {
+    var store = new Store();
+    store.addInventory(Product.SHAMPOO, 10);
+    var customer = new Customer();
+
+    boolean success = customer.purchase(store, Product.SHAMPOO, 15);
+
+    assertThat(success).isFalse();
+    assertThat(store.getInventory(Product.SHAMPOO)).isEqualTo(10);  // 库存没变
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="test_customer.py（经典风格）"><pre>
+def test_purchase_succeeds_when_enough_inventory():
+    # Arrange（准备）
+    store = Store()
+    store.add_inventory(Product.SHAMPOO, 10)
+    customer = Customer()
+
+    # Act（执行）
+    success = customer.purchase(store, Product.SHAMPOO, 5)
+
+    # Assert（断言）
+    assert success is True
+    assert store.get_inventory(Product.SHAMPOO) == 5    # 库存少了 5
+
+
+def test_purchase_fails_when_not_enough_inventory():
+    store = Store()
+    store.add_inventory(Product.SHAMPOO, 10)
+    customer = Customer()
+
+    success = customer.purchase(store, Product.SHAMPOO, 15)
+
+    assert success is False
+    assert store.get_inventory(Product.SHAMPOO) == 10   # 库存没变
+</pre></div>
+<div class="code" data-lang="ts" data-file="customer.test.ts（经典风格）"><pre>
+test('purchase succeeds when enough inventory', () =&gt; {
+  // Arrange（准备）
+  const store = new Store()
+  store.addInventory(Product.Shampoo, 10)
+  const customer = new Customer()
+
+  // Act（执行）
+  const success = customer.purchase(store, Product.Shampoo, 5)
+
+  // Assert（断言）
+  expect(success).toBe(true)
+  expect(store.getInventory(Product.Shampoo)).toBe(5)    // 库存少了 5
+})
+
+test('purchase fails when not enough inventory', () =&gt; {
+  const store = new Store()
+  store.addInventory(Product.Shampoo, 10)
+  const customer = new Customer()
+
+  const success = customer.purchase(store, Product.Shampoo, 15)
+
+  expect(success).toBe(false)
+  expect(store.getInventory(Product.Shampoo)).toBe(10)   // 库存没变
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 2.1 · 仓库 <code>code/Book/Chapter2/Listing1/CustomerTests.cs</code></p>
+
+<p>
+  测试没有替换协作者，用的是一个货真价实的 <code>Store</code>。于是这个测试实际上<strong>同时验证了 <code>Customer</code> 和 <code>Store</code></strong>：
+  如果 <code>Store</code> 内部有 Bug，哪怕 <code>Customer</code> 完全正确，这些测试也会失败。
+</p>
+
+<h3>伦敦风格：把 Store 换成 Mock</h3>
+
+<p>
+  要用 Mock，通常先给 <code>Store</code> 抽一个接口，让 <code>Customer.purchase</code> 接收接口而不是具体类
+  （Python 靠鸭子类型，不抽接口也行）。然后：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="CustomerTests.java（伦敦风格）"><pre>
+@Test
+void purchase_succeeds_when_enough_inventory() {
+    // Arrange：不创建真的 Store，直接告诉替身「被问到时怎么回答」
+    IStore storeMock = mock(IStore.class);
+    when(storeMock.hasEnoughInventory(Product.SHAMPOO, 5)).thenReturn(true);
+    var customer = new Customer();
+
+    // Act
+    boolean success = customer.purchase(storeMock, Product.SHAMPOO, 5);
+
+    // Assert：检查的是「顾客对商店做了什么调用」
+    assertThat(success).isTrue();
+    verify(storeMock, times(1)).removeInventory(Product.SHAMPOO, 5);
+}
+
+@Test
+void purchase_fails_when_not_enough_inventory() {
+    IStore storeMock = mock(IStore.class);
+    when(storeMock.hasEnoughInventory(Product.SHAMPOO, 5)).thenReturn(false);
+    var customer = new Customer();
+
+    boolean success = customer.purchase(storeMock, Product.SHAMPOO, 5);
+
+    assertThat(success).isFalse();
+    verify(storeMock, never()).removeInventory(Product.SHAMPOO, 5);
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="test_customer.py（伦敦风格）"><pre>
+from unittest.mock import Mock
+
+
+def test_purchase_succeeds_when_enough_inventory():
+    # Arrange：不创建真的 Store，直接告诉替身「被问到时怎么回答」
+    store_mock = Mock(spec=Store)
+    store_mock.has_enough_inventory.return_value = True
+    customer = Customer()
+
+    # Act
+    success = customer.purchase(store_mock, Product.SHAMPOO, 5)
+
+    # Assert：检查的是「顾客对商店做了什么调用」
+    assert success is True
+    store_mock.remove_inventory.assert_called_once_with(Product.SHAMPOO, 5)
+
+
+def test_purchase_fails_when_not_enough_inventory():
+    store_mock = Mock(spec=Store)
+    store_mock.has_enough_inventory.return_value = False
+    customer = Customer()
+
+    success = customer.purchase(store_mock, Product.SHAMPOO, 5)
+
+    assert success is False
+    store_mock.remove_inventory.assert_not_called()
+</pre></div>
+<div class="code" data-lang="ts" data-file="customer.test.ts（伦敦风格）"><pre>
+import { vi } from 'vitest'
+
+function createStoreMock(hasEnough: boolean): IStore {
+  return {
+    hasEnoughInventory: vi.fn().mockReturnValue(hasEnough),
+    removeInventory: vi.fn(),
+    addInventory: vi.fn(),
+    getInventory: vi.fn(),
+  }
+}
+
+test('purchase succeeds when enough inventory', () =&gt; {
+  // Arrange：不创建真的 Store，直接告诉替身「被问到时怎么回答」
+  const storeMock = createStoreMock(true)
+  const customer = new Customer()
+
+  // Act
+  const success = customer.purchase(storeMock, Product.Shampoo, 5)
+
+  // Assert：检查的是「顾客对商店做了什么调用」
+  expect(success).toBe(true)
+  expect(storeMock.removeInventory).toHaveBeenCalledOnce()
+  expect(storeMock.removeInventory).toHaveBeenCalledWith(Product.Shampoo, 5)
+})
+
+test('purchase fails when not enough inventory', () =&gt; {
+  const storeMock = createStoreMock(false)
+  const customer = new Customer()
+
+  const success = customer.purchase(storeMock, Product.Shampoo, 5)
+
+  expect(success).toBe(false)
+  expect(storeMock.removeInventory).not.toHaveBeenCalled()
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 2.2 · 仓库 <code>code/Book/Chapter2/Listing2/CustomerTests.cs</code></p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="经典风格断言的是商店的最终状态，伦敦风格断言的是顾客对商店的调用">
+  <rect class="bx-g" x="20" y="20" width="350" height="210" rx="12"/>
+  <text class="ttl on-g" x="36" y="46">经典风格 · 验证状态</text>
+  <rect class="bx-a" x="40" y="70" width="110" height="44" rx="8"/><text class="lbl on-a" x="95" y="97" text-anchor="middle">Customer</text>
+  <rect class="bx" x="230" y="70" width="120" height="44" rx="8"/><text class="lbl" x="290" y="90" text-anchor="middle">真的 Store</text><text class="sm" x="290" y="106" text-anchor="middle">库存 10 &rarr; 5</text>
+  <path class="ln" d="M152 92 H226" marker-end="url(#ar)"/>
+  <text class="sm" x="189" y="84" text-anchor="middle">purchase</text>
+  <path class="ln-g" d="M290 180 V118" marker-end="url(#ar-g)"/>
+  <rect class="bx" x="170" y="182" width="184" height="34" rx="7"/>
+  <text class="lbl" x="262" y="204" text-anchor="middle">测试问：库存现在是 5 吗？</text>
+  <text class="sm" x="40" y="150">不关心 Customer 是</text>
+  <text class="sm" x="40" y="166">怎么让库存变少的</text>
+
+  <rect class="bx-b" x="390" y="20" width="350" height="210" rx="12"/>
+  <text class="ttl on-b" x="406" y="46">伦敦风格 · 验证交互</text>
+  <rect class="bx-a" x="410" y="70" width="110" height="44" rx="8"/><text class="lbl on-a" x="465" y="97" text-anchor="middle">Customer</text>
+  <rect class="bx-d" x="600" y="70" width="120" height="44" rx="8"/><text class="lbl" x="660" y="90" text-anchor="middle">Store 的 Mock</text><text class="sm" x="660" y="106" text-anchor="middle">没有库存这回事</text>
+  <path class="ln" d="M522 92 H596" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M559 180 V96" marker-end="url(#ar-b)"/>
+  <rect class="bx" x="440" y="182" width="290" height="34" rx="7"/>
+  <text class="lbl" x="585" y="204" text-anchor="middle">测试问：removeInventory 被调了一次吗？</text>
+  <text class="sm" x="410" y="150">盯着的是中间</text>
+  <text class="sm" x="410" y="166">这根「调用线」</text>
+</svg>
+<figcaption>图 2-4　两种风格最关键的区别在断言阶段：一个看<strong>结果</strong>，一个看<strong>过程</strong></figcaption>
+</figure>
+
+<h2 id="classical">经典学派：把测试和测试隔开</h2>
+
+<p>
+  经典学派对「隔离」的理解完全不同：需要被隔离的<strong>不是代码，而是测试本身</strong>。
+  测试之间应该互不影响 —— 这样你可以并行跑、顺序跑、以任意顺序跑，结果都一样。
+</p>
+
+<p>
+  按这个理解，一次测试同时用到好几个类完全没问题，只要它们都待在内存里、不去碰<strong>共享状态</strong>。
+  测试正是通过共享状态互相干扰的。举个例子：测试 A 在准备阶段往数据库插入一个客户，
+  测试 B 在自己的准备阶段把它删了。两个测试并行跑，A 就会失败 —— 不是因为代码坏了，而是被 B 搅了局。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="经典学派只替换共享依赖，比如数据库和文件系统；私有依赖保留真实对象">
+  <rect class="bx-g" x="310" y="24" width="140" height="42" rx="8"/>
+  <text class="lbl on-g" x="380" y="50" text-anchor="middle">另一个类</text>
+  <text class="sm on-g" x="462" y="50">私有依赖 &rarr; 保留真的</text>
+  <path class="ln-g" d="M380 104 V70" marker-end="url(#ar-g)"/>
+
+  <rect class="bx-a" x="300" y="108" width="160" height="50" rx="10"/>
+  <text class="ttl on-a" x="380" y="138" text-anchor="middle">被测系统</text>
+
+  <rect class="bx-r" x="40" y="108" width="150" height="50" rx="10"/>
+  <text class="lbl on-r" x="115" y="138" text-anchor="middle">数据库</text>
+  <path class="ln-r" d="M296 133 H194" marker-end="url(#ar-r)" style="stroke-dasharray:5 4"/>
+  <text class="sm on-r" x="245" y="124" text-anchor="middle">共享 &rarr; 替换</text>
+
+  <rect class="bx-r" x="570" y="108" width="150" height="50" rx="10"/>
+  <text class="lbl on-r" x="645" y="138" text-anchor="middle">文件系统</text>
+  <path class="ln-r" d="M464 133 H566" marker-end="url(#ar-r)" style="stroke-dasharray:5 4"/>
+  <text class="sm on-r" x="515" y="124" text-anchor="middle">共享 &rarr; 替换</text>
+
+  <rect class="bx" x="320" y="200" width="120" height="36" rx="18"/>
+  <text class="lbl" x="380" y="223" text-anchor="middle">测试</text>
+  <path class="ln" d="M380 198 V162" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 2-5　经典学派的隔离：只把会让测试互相干扰的<strong>共享依赖</strong>换成替身，其余保持原样</figcaption>
+</figure>
+
+<p>
+  这也带来了对「单元」的不同理解：单元不必是一个类，<strong>可以是一组类</strong>，只要里面没有共享依赖。
+</p>
+
+<h3>几种依赖，一次分清</h3>
+
+<p>下面这几个词会在全书反复出现，值得现在就弄明白。</p>
+
+<div class="tw">
+<table>
+  <tr><th>名称</th><th>定义</th><th>例子</th></tr>
+  <tr><td><strong>共享依赖</strong><br>shared</td><td>被多个测试共用，并且让它们有办法影响彼此结果的依赖</td><td>静态可变字段、数据库、文件系统</td></tr>
+  <tr><td><strong>私有依赖</strong><br>private</td><td>不是共享的依赖</td><td>测试里 <code>new</code> 出来的 <code>Store</code></td></tr>
+  <tr><td><strong>进程外依赖</strong><br>out-of-process</td><td>运行在应用进程之外的依赖，是通往「还不在内存里的数据」的代理</td><td>数据库、消息队列、第三方 API</td></tr>
+  <tr><td><strong>易变依赖</strong><br>volatile</td><td>需要额外搭建运行环境，<em>或者</em>行为不确定的依赖</td><td>数据库、API 服务、随机数生成器、当前时间</td></tr>
+</table>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="维恩图：共享依赖和进程外依赖大部分重叠，但不完全相同">
+  <ellipse class="bx-b" cx="290" cy="120" rx="220" ry="96"/>
+  <ellipse class="bx-p" cx="470" cy="120" rx="220" ry="96" style="fill-opacity:.55"/>
+  <text class="ttl on-b" x="100" y="30" text-anchor="middle">共享依赖</text>
+  <text class="ttl on-p" x="660" y="30" text-anchor="middle">进程外依赖</text>
+
+  <text class="lbl" x="150" y="112" text-anchor="middle">单例对象</text>
+  <text class="lbl" x="150" y="132" text-anchor="middle">静态可变字段</text>
+  <text class="sm" x="150" y="152" text-anchor="middle">在进程内，却被共用</text>
+
+  <text class="ttl" x="380" y="112" text-anchor="middle">数据库</text>
+  <text class="lbl" x="380" y="132" text-anchor="middle">文件系统</text>
+  <text class="sm" x="380" y="152" text-anchor="middle">绝大多数情况落在这</text>
+
+  <text class="lbl" x="585" y="104" text-anchor="middle">只读的 API 服务</text>
+  <text class="lbl" x="585" y="124" text-anchor="middle">每次测试新起的</text>
+  <text class="lbl" x="585" y="142" text-anchor="middle">Docker 数据库</text>
+  <text class="sm" x="585" y="162" text-anchor="middle">测试改不了 / 各用各的</text>
+
+  <text class="sm" x="380" y="240" text-anchor="middle">判断「共享」的关键：测试能不能通过<tspan font-weight="700">修改它的状态</tspan>来影响别的测试</text>
+</svg>
+<figcaption>图 2-6　共享依赖与进程外依赖的关系。实际项目中两者几乎总是重合，所以后文常常混用这两个词</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; 单例一定是共享依赖吗？</div>
+  <p>
+    不一定。「共享」是指<strong>在测试之间</strong>共享，不是在生产代码的类之间共享。
+    比如配置类在生产环境只有一个实例，但只要它是通过构造函数注入的，每个测试都可以 <code>new</code> 一个新的 ——
+    这时它就是私有依赖。而数据库和文件系统你没法每个测试新建一个，所以要么共享，要么用替身换掉。
+  </p>
+</div>
+
+<div class="box deep">
+  <div class="t">&#128300; 共享依赖 vs. 易变依赖</div>
+  <p>两个概念有重叠，但不一样：</p>
+  <ul>
+    <li><strong>数据库</strong>：既共享又易变。</li>
+    <li><strong>文件系统</strong>：共享但<em>不</em>易变 —— 每台开发机上都有，行为基本确定；但测试能通过它互相干扰。</li>
+    <li><strong>随机数生成器</strong>：易变但<em>不</em>共享 —— 每次结果不同，但可以给每个测试一个独立实例。</li>
+  </ul>
+</div>
+
+<p>
+  替换共享依赖还有一个好处：<strong>快</strong>。共享依赖几乎都在进程外，调用它们比调用内存里的对象慢得多。
+  而「运行得快」是单元测试的第二个特征，所以碰了共享依赖的测试会被划到集成测试那边去。
+</p>
+
+<h2 id="deps">两个学派如何对待依赖</h2>
+
+<p>
+  伦敦学派虽然到处用替身，但也不是所有依赖都换。判断标准是<strong>依赖是否可变</strong>：
+  永远不会变的对象（不可变对象）不用换。
+</p>
+
+<p>
+  回头看伦敦风格的测试：<code>Store</code> 换成了 Mock，但 <code>Product.SHAMPOO</code> 和数字 <code>5</code> 都是原样使用的。
+  你不会想给数字 5 造一个替身吧？因为它不可能被改。这种不可变对象叫<strong>值对象</strong>（value object）。
+</p>
+
+<div class="term">
+  <b class="w">值对象（value object）</b>
+  <p>没有独立身份、完全由内容来标识的不可变对象。两个内容相同的值对象可以互相替换 —— 两个整数 5，用哪个都一样。</p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 320" role="img" aria-label="依赖的层级分类：依赖分为共享和私有，私有又分为可变和值对象。经典学派只替换共享依赖，伦敦学派还替换可变的私有依赖">
+  <rect class="bx" x="310" y="16" width="140" height="40" rx="8"/>
+  <text class="ttl" x="380" y="41" text-anchor="middle">依赖</text>
+  <path class="ln" d="M350 58 L210 104" marker-end="url(#ar)"/>
+  <path class="ln" d="M410 58 L550 104" marker-end="url(#ar)"/>
+
+  <rect class="bx-r" x="120" y="108" width="170" height="58" rx="8"/>
+  <text class="ttl on-r" x="205" y="132" text-anchor="middle">共享依赖</text>
+  <text class="sm" x="205" y="152" text-anchor="middle">例：数据库</text>
+
+  <rect class="bx" x="470" y="108" width="170" height="58" rx="8"/>
+  <text class="ttl" x="555" y="132" text-anchor="middle">私有依赖</text>
+  <text class="sm" x="555" y="152" text-anchor="middle">每个测试自己一份</text>
+
+  <path class="ln" d="M525 168 L450 214" marker-end="url(#ar)"/>
+  <path class="ln" d="M585 168 L650 214" marker-end="url(#ar)"/>
+
+  <rect class="bx-b" x="350" y="218" width="170" height="58" rx="8"/>
+  <text class="ttl on-b" x="435" y="242" text-anchor="middle">可变的</text>
+  <text class="sm" x="435" y="262" text-anchor="middle">例：Store 实例</text>
+
+  <rect class="bx-g" x="570" y="218" width="170" height="58" rx="8"/>
+  <text class="ttl on-g" x="655" y="242" text-anchor="middle">值对象（不可变）</text>
+  <text class="sm" x="655" y="262" text-anchor="middle">例：Product、数字 5</text>
+
+  <rect class="bx-d" x="20" y="196" width="250" height="46" rx="8"/>
+  <text class="lbl" x="145" y="216" text-anchor="middle"><tspan class="on-r" font-weight="700">经典学派</tspan>：只换红色这一格</text>
+  <text class="sm" x="145" y="232" text-anchor="middle">其余都用真的</text>
+  <path class="ln-r" d="M165 196 V170" marker-end="url(#ar-r)"/>
+
+  <rect class="bx-d" x="20" y="256" width="250" height="46" rx="8"/>
+  <text class="lbl" x="145" y="276" text-anchor="middle"><tspan class="on-b" font-weight="700">伦敦学派</tspan>：红色 + 蓝色都换</text>
+  <text class="sm" x="145" y="292" text-anchor="middle">只有值对象原样使用</text>
+  <path class="ln-b" d="M272 279 H346" marker-end="url(#ar-b)"/>
+
+  <text class="sm" x="435" y="300" text-anchor="middle">共享的或可变的依赖，统称「协作者」</text>
+</svg>
+<figcaption>图 2-7　依赖的分类树，以及两个学派各自替换哪些</figcaption>
+</figure>
+
+<p>把目前为止的差别汇总成一张表：</p>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>隔离的对象</th><th>一个「单元」是</th><th>对什么使用测试替身</th></tr>
+  <tr><td><strong>伦敦学派</strong></td><td>单元（类）之间</td><td>一个类</td><td>除不可变依赖以外的所有依赖</td></tr>
+  <tr><td><strong>经典学派</strong></td><td>测试之间</td><td>一个类，或一组类</td><td>共享依赖</td></tr>
+</table>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 协作者 vs. 依赖</div>
+  <p>
+    在 <code>customer.purchase(store, Product.SHAMPOO, 5)</code> 这个调用里有三个依赖。
+    <code>store</code> 是<strong>协作者</strong>（它的状态会变）；另外两个是<strong>值</strong>，不是协作者。
+  </p>
+</div>
+
+<h2 id="contrast">两个学派的优劣</h2>
+
+<p>
+  本教程（和原书作者）偏向<strong>经典学派</strong>。理由是：它写出的测试质量更高，更适合实现「可持续增长」这个终极目标。
+  核心原因是<strong>脆弱性</strong> —— 用 Mock 的测试比经典测试更容易在重构时莫名其妙地变红（第 5 章细讲）。
+  下面逐条看伦敦学派的三个卖点为什么站不住。
+</p>
+
+<h3>卖点一：粒度更细，一次只测一个类</h3>
+
+<p>
+  做面向对象开发的人习惯把类当成最基本的积木，于是很自然地把类当成测试的基本单位。
+  这个倾向可以理解，但它把人带偏了。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 测试应该验证「行为单元」，而不是「代码单元」</div>
+  <p>
+    一个行为单元是对问题领域有意义的东西 —— 最好是业务人员一听就觉得有用的东西。
+    实现它用了几个类根本不重要：可能跨好几个类，可能只有一个类，也可能只是一个小方法。
+  </p>
+</div>
+
+<p>测试应该在讲一个故事，而且这个故事要让不懂编程的人也觉得连贯、有意义：</p>
+
+<div class="vs">
+  <div class="new">
+    <div class="h">&#10003; 一个连贯的故事（测行为）</div>
+    <p style="padding:12px 16px;margin:0">我叫我的狗，它就跑到我身边来。</p>
+  </div>
+  <div class="old">
+    <div class="h">&#10007; 一堆动作（测类）</div>
+    <p style="padding:12px 16px;margin:0">我叫我的狗，它先迈左前腿，再迈右前腿，头转过来，尾巴开始摇……</p>
+  </div>
+</div>
+
+<p>
+  右边那个故事让人摸不着头脑：这些动作是要干什么？狗是朝我来，还是在逃跑？看不出来。
+  当你把测试对准一个个单独的类（狗的腿、头、尾巴），而不是真正的行为（狗回到主人身边）时，测试就是这个样子。
+</p>
+
+<h3>卖点二：更容易测试一大张互相关联的类图</h3>
+
+<p>
+  没错，用 Mock 可以切断依赖图，省掉大量准备工作。但这条理由<strong>找错了问题</strong>。
+  你该关心的不是「怎么测一大团纠缠的类」，而是「怎么一开始就别有这么一大团」。大而复杂的类图通常是设计出了问题。
+</p>
+
+<p>
+  测试把这个问题暴露出来其实是好事 —— 还记得第 1 章说的吗？「很难测」是代码质量差的可靠信号。
+  如果为了测一个类，准备阶段长得离谱，这就是在报警。<strong>Mock 只是把警报捂住了，并没有解决根本问题。</strong>
+</p>
+
+<h3>卖点三：测试失败时能精确定位 Bug</h3>
+
+<p>
+  伦敦风格下，一个 Bug 通常只让包含它的那个类的测试失败；经典风格下，用到这个类的其他测试也会跟着失败，产生连锁反应。
+  这确实是个问题，但不大：
+</p>
+
+<ul>
+  <li>如果你经常跑测试（最好每次改动后都跑），你知道是什么引起的 —— <strong>就是你刚刚改的那个地方</strong>。</li>
+  <li>不用挨个看失败的测试，修好一个，其他的自动就好了。</li>
+  <li>连锁失败本身也是信息：一个改动让一大片测试变红，说明你刚碰的那段代码非常关键，整个系统都依赖它。</li>
+</ul>
+
+<h3>其他差别：TDD 的方向，和过度指定</h3>
+
+<div class="box note">
+  <div class="t">&#9432; 什么是测试驱动开发（TDD）</div>
+  <p>一种靠测试来推动开发的流程。每个测试用例都重复三步：</p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 170" role="img" aria-label="TDD 的三步循环：写失败的测试，写刚好够用的代码让它通过，重构">
+  <rect class="bx-r" x="40" y="40" width="190" height="80" rx="12"/>
+  <text class="ttl on-r" x="135" y="68" text-anchor="middle">① 红</text>
+  <text class="lbl" x="135" y="90" text-anchor="middle">先写一个会失败的测试</text>
+  <text class="sm" x="135" y="108" text-anchor="middle">说明要加什么功能</text>
+
+  <rect class="bx-g" x="285" y="40" width="190" height="80" rx="12"/>
+  <text class="ttl on-g" x="380" y="68" text-anchor="middle">② 绿</text>
+  <text class="lbl" x="380" y="90" text-anchor="middle">写刚好够用的代码让它通过</text>
+  <text class="sm" x="380" y="108" text-anchor="middle">此时代码不必优雅</text>
+
+  <rect class="bx-b" x="530" y="40" width="190" height="80" rx="12"/>
+  <text class="ttl on-b" x="625" y="68" text-anchor="middle">③ 重构</text>
+  <text class="lbl" x="625" y="90" text-anchor="middle">在测试保护下清理代码</text>
+  <text class="sm" x="625" y="108" text-anchor="middle">变得可读、可维护</text>
+
+  <path class="ln" d="M232 80 H281" marker-end="url(#ar)"/>
+  <path class="ln" d="M477 80 H526" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M625 122 V150 H135 V124" marker-end="url(#ar)"/>
+  <text class="sm" x="380" y="144" text-anchor="middle">下一个测试用例</text>
+</svg>
+<figcaption>图 2-8　TDD 的「红 — 绿 — 重构」循环</figcaption>
+</figure>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>伦敦学派</th><th>经典学派</th></tr>
+  <tr><td><strong>TDD 方向</strong></td><td><strong>由外向内</strong>（outside-in）：从高层测试开始，用 Mock 指定它该和哪些协作者交谈，再一层层往里实现</td><td><strong>由内向外</strong>（inside-out）：从领域模型开始，一层层往外加，直到用户能用</td></tr>
+  <tr><td><strong>过度指定</strong></td><td>更容易把测试和实现细节绑死</td><td>相对不容易</td></tr>
+</table>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 最关键的区别：过度指定（over-specification）</div>
+  <p>
+    过度指定就是<strong>测试和被测系统的实现细节耦合在了一起</strong>。伦敦风格比经典风格更容易写出这种测试 ——
+    这是反对「到处用 Mock」最主要的理由。从第 4 章开始会逐步展开。
+  </p>
+</div>
+
+<h2 id="integration">集成测试和端到端测试</h2>
+
+<p>
+  两派对「集成测试」的定义也不一样。伦敦学派认为：只要用了真实的协作者对象，就是集成测试。
+  按这个标准，上面那两个经典风格的测试在伦敦学派眼里都算集成测试。
+</p>
+
+<p>本教程采用经典学派的定义。把单元测试的三个特征按经典学派的理解重新表述一遍：</p>
+
+<div class="box key">
+  <div class="t">&#9733; 单元测试的最终定义（经典学派）</div>
+  <ul>
+    <li>验证<strong>一个行为单元</strong>，</li>
+    <li>运行得<strong>快</strong>，</li>
+    <li>并且<strong>与其他测试相互隔离</strong>。</li>
+  </ul>
+  <p><strong>集成测试</strong>，就是至少不满足其中一条的测试。</p>
+</div>
+
+<div class="tw">
+<table>
+  <tr><th>不满足哪条</th><th>典型情况</th></tr>
+  <tr><td>不能与其他测试隔离</td><td>访问了共享依赖（如数据库）。并行跑会互相干扰，只能排队顺序执行</td></tr>
+  <tr><td>不够快</td><td>访问了进程外依赖。一次数据库调用就是几百毫秒，测试多了每一秒都很要紧</td></tr>
+  <tr><td>验证了不止一个行为单元</td><td>为了提速把两个慢测试合并成一个；或者验证两个团队开发的模块如何协同工作</td></tr>
+</table>
+</div>
+
+<h3>端到端测试是集成测试的子集</h3>
+
+<p>
+  <strong>端到端测试</strong>（end-to-end，E2E）也是检查代码和进程外依赖如何协同工作，区别在于它包含的进程外依赖<strong>更多</strong>：
+  集成测试通常只带一两个，端到端测试带上全部或绝大多数，从最终用户的角度验证整个系统。
+  UI 测试、GUI 测试、功能测试这些说法，基本可以看作它的同义词。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="三种测试的范围：单元测试只包含被测系统和内存中的类，集成测试多包含数据库，端到端测试包含所有进程外依赖">
+  <rect class="bx-d" x="20" y="24" width="720" height="206" rx="14" style="fill:none"/>
+  <text class="ttl" x="36" y="48">端到端测试</text>
+  <text class="sm" x="36" y="66">包含全部进程外依赖</text>
+
+  <rect class="bx-g" x="150" y="64" width="408" height="150" rx="12" style="fill-opacity:.5"/>
+  <text class="ttl on-g" x="166" y="88">集成测试</text>
+  <text class="sm" x="166" y="106">多带一两个好控制的进程外依赖</text>
+
+  <rect class="bx-a" x="334" y="110" width="210" height="92" rx="10"/>
+  <text class="ttl on-a" x="350" y="132">单元测试</text>
+  <rect class="bx" x="350" y="144" width="84" height="44" rx="7"/>
+  <text class="lbl" x="392" y="171" text-anchor="middle">被测系统</text>
+  <rect class="bx" x="446" y="144" width="84" height="44" rx="7"/>
+  <text class="lbl" x="488" y="171" text-anchor="middle">另一个类</text>
+
+  <rect class="bx-b" x="170" y="134" width="130" height="56" rx="8"/>
+  <text class="lbl on-b" x="235" y="158" text-anchor="middle">数据库</text>
+  <text class="sm" x="235" y="176" text-anchor="middle">完全由你控制</text>
+
+  <rect class="bx-p" x="590" y="118" width="130" height="72" rx="8"/>
+  <text class="lbl on-p" x="655" y="144" text-anchor="middle">支付网关</text>
+  <text class="sm" x="655" y="162" text-anchor="middle">别人的系统</text>
+  <text class="sm" x="655" y="178" text-anchor="middle">不好控制</text>
+
+  <text class="sm" x="380" y="254" text-anchor="middle">范围越大 &rarr; 越接近真实用户体验，但越慢、越贵、越难维护</text>
+</svg>
+<figcaption>图 2-9　三种测试的范围是一层套一层的</figcaption>
+</figure>
+
+<p>
+  假设你的应用有三个进程外依赖：数据库、文件系统、支付网关。典型的集成测试会把数据库和文件系统纳入范围，
+  用替身换掉支付网关。因为前两者你能完全控制，很容易在测试里摆成需要的状态；支付网关则不行 ——
+  你可能得联系支付公司开一个专门的测试账号，还要时不时手动清理以前测试留下的扣款记录。
+</p>
+
+<div class="box tip">
+  <div class="t">&#128161; 端到端测试该什么时候跑</div>
+  <p>
+    它的维护成本最高，所以适合放在构建流程的<strong>后段</strong>：等所有单元测试和集成测试都过了再跑，
+    甚至只在构建服务器上跑，不在开发者自己的机器上跑。
+    另外，即使是端到端测试，也未必能带上所有依赖（有的依赖根本没有测试版本），
+    所以集成测试和端到端测试之间并没有一条清晰的界线。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>单元测试的定义（经典版）：验证一个<strong>行为单元</strong>、运行得<strong>快</strong>、与<strong>其他测试隔离</strong>。</li>
+  <li>「隔离」的含义是争议焦点，由此分出两个学派，它们对「单元是什么」「怎么处理依赖」的看法也跟着不同。</li>
+  <li><strong>伦敦学派</strong>：隔离的是被测单元；单元 = 类；除不可变依赖外全部换成测试替身。</li>
+  <li><strong>经典学派</strong>：隔离的是测试；单元 = 行为；只把共享依赖换成测试替身。</li>
+  <li>共享依赖是让测试能互相影响的依赖。它和进程外依赖、易变依赖有重叠但不等同。</li>
+  <li>伦敦学派的三个好处（粒度细、易测大类图、定位准）各有问题：该测的是行为不是类；难测是设计问题，Mock 只是掩盖它；Bug 多半就在你刚改的地方。</li>
+  <li>伦敦学派最大的问题是<strong>过度指定</strong> —— 测试和实现细节耦合。</li>
+  <li>集成测试 = 至少不满足单元测试三条标准之一的测试。端到端测试是它的子集，包含全部或几乎全部进程外依赖。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>一个测试 <code>new</code> 了三个不同的类并让它们协作，没有访问数据库或文件。按经典学派它是单元测试吗？按伦敦学派呢？</summary>
+  <p>经典学派：是。只要它验证的是一个行为单元、跑得快、不和别的测试共享状态。伦敦学派：不是，它用了真实的协作者，会被归为集成测试。</p>
+</details>
+<details class="quiz">
+  <summary>文件系统是共享依赖吗？是易变依赖吗？</summary>
+  <p>是共享依赖（测试可以通过文件互相干扰），但不是易变依赖（每台机器都有，行为确定）。</p>
+</details>
+<details class="quiz">
+  <summary>为什么伦敦风格的测试里没有给 <code>Product.SHAMPOO</code> 造一个 Mock？</summary>
+  <p>因为它是不可变的值对象。伦敦学派只替换可变的依赖（协作者）；值对象没有可被改变的状态，原样使用即可。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>把本章的 <code>Store</code> 和 <code>Customer</code> 敲出来，先写经典风格的两个测试并跑通。</li>
+    <li>再写伦敦风格的两个测试。然后做个实验：把 <code>Customer.purchase</code> 的实现改成
+        <strong>不调用 <code>hasEnoughInventory</code></strong>，而是直接比较 <code>store.getInventory(product) &gt;= quantity</code>。
+        行为完全没变 —— 哪种风格的测试挂了？为什么？</li>
+    <li>列出你当前项目里的五个依赖，给每个标上：共享 / 私有？进程内 / 进程外？可变 / 值对象？</li>
+    <li>找一个你写过的测试，试着用「我叫我的狗，它就跑过来」那样的一句话描述它在验证什么。说不出来的话，它测的可能是代码而不是行为。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

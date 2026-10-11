@@ -1,0 +1,1438 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 7 章 · 重构出有价值的测试 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="7">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 7 章</span>
+<h1>重构出有价值的单元测试</h1>
+<p class="lede">
+  前几章教你<strong>识别</strong>好测试，这一章教你<strong>写出</strong>好测试。结论可能出乎意料：
+  想让测试变好，多半要先动被测代码。我们会拿一个接近真实的 CRM 系统，一步步把「难测的一坨」拆成「好测的核心」和「不用怎么测的胶水」。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>用<strong>四象限</strong>给任何一段代码分类，并知道每一类该怎么测</li>
+    <li>理解 <strong>Humble Object（谦卑对象）</strong>模式：把逻辑从难测的代码里抽出来</li>
+    <li>跟着 CRM 的例子完成四步重构</li>
+    <li>处理「控制器里的条件逻辑」这个难题：<strong>CanExecute/Execute</strong> 模式和<strong>领域事件</strong></li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="four-types">四种代码</h2>
+
+<p>所有生产代码都可以沿两个维度分类：</p>
+
+<div class="tw">
+<table>
+  <tr><th>维度</th><th>含义</th><th>对测试意味着什么</th></tr>
+  <tr><td><strong>复杂度</strong>或<strong>领域重要性</strong></td><td>复杂度 = 代码里决策点（分支）的数量。领域重要性 = 这段代码对项目所解决的问题有多重要</td><td>越高，测试的<strong>防止回归</strong>价值越大</td></tr>
+  <tr><td><strong>协作者的数量</strong></td><td>协作者 = 可变的或进程外的依赖（第 2 章）。显式传入的和隐式引用的都算；不可变的值不算</td><td>越多，测试越大、<strong>维护成本</strong>越高</td></tr>
+</table>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 圈复杂度怎么算</div>
+  <p>
+    <strong>圈复杂度 = 1 + 分支点的数量</strong>。没有任何 <code>if</code> / 循环的方法，圈复杂度是 1。
+    它也等于「从入口到出口的独立路径数」，或者说「达到 100% 分支覆盖需要的测试数」。
+    注意分支点按最简谓词计：<code>if (a &amp;&amp; b)</code> 相当于两层 <code>if</code>，复杂度是 1 + 2 = 3。
+  </p>
+  <p>
+    复杂度和领域重要性是<strong>相互独立</strong>的：一个计算订单价格的方法可能一个 <code>if</code> 都没有（复杂度 1），
+    但它是业务关键功能，照样值得测。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 350" role="img" aria-label="四象限图：纵轴是复杂度或领域重要性，横轴是协作者数量。左上是领域模型与算法，右上是过度复杂的代码，左下是琐碎代码，右下是控制器。过度复杂的代码应该被拆分到左上和右下">
+  <path class="ln" d="M150 30 V290 H630" marker-start="url(#ar)" marker-end="url(#ar)"/>
+  <text class="sm" x="80" y="150" text-anchor="middle">复杂度 /</text>
+  <text class="sm" x="80" y="166" text-anchor="middle">领域重要性</text>
+  <text class="sm" x="390" y="312" text-anchor="middle">协作者的数量 &rarr;</text>
+
+  <rect class="bx-g" x="160" y="44" width="220" height="116" rx="10"/>
+  <text class="ttl on-g" x="270" y="72" text-anchor="middle">领域模型与算法</text>
+  <text class="sm" x="270" y="96" text-anchor="middle">复杂或重要，协作者很少</text>
+  <text class="lbl on-g" x="270" y="124" text-anchor="middle">&#9733; 重点做单元测试</text>
+  <text class="sm" x="270" y="144" text-anchor="middle">价值高、成本低</text>
+
+  <rect class="bx-r" x="396" y="44" width="220" height="116" rx="10"/>
+  <text class="ttl on-r" x="506" y="72" text-anchor="middle">过度复杂的代码</text>
+  <text class="sm" x="506" y="96" text-anchor="middle">既复杂重要，协作者又多</text>
+  <text class="lbl on-r" x="506" y="124" text-anchor="middle">难测，但不测又太危险</text>
+  <text class="sm" x="506" y="144" text-anchor="middle">例：什么都自己干的「胖控制器」</text>
+
+  <rect class="bx" x="160" y="170" width="220" height="110" rx="10"/>
+  <text class="ttl" x="270" y="198" text-anchor="middle">琐碎代码</text>
+  <text class="sm" x="270" y="222" text-anchor="middle">不复杂，协作者也少</text>
+  <text class="lbl" x="270" y="250" text-anchor="middle">根本不用测</text>
+  <text class="sm" x="270" y="268" text-anchor="middle">例：无参构造函数、单行属性</text>
+
+  <rect class="bx-b" x="396" y="170" width="220" height="110" rx="10"/>
+  <text class="ttl on-b" x="506" y="198" text-anchor="middle">控制器</text>
+  <text class="sm" x="506" y="222" text-anchor="middle">自己不干复杂的活，只做协调</text>
+  <text class="lbl on-b" x="506" y="250" text-anchor="middle">用少量集成测试覆盖</text>
+  <text class="sm" x="506" y="268" text-anchor="middle">（第 8 章）</text>
+
+  <path class="ln-a" style="stroke-width:2.4" d="M394 102 H384" marker-end="url(#ar-a)"/>
+  <path class="ln-a" style="stroke-width:2.4" d="M506 162 V168" marker-end="url(#ar-a)"/>
+  <rect class="bx-a" x="636" y="74" width="114" height="76" rx="10"/>
+  <text class="ttl on-a" x="693" y="100" text-anchor="middle">目标：</text>
+  <text class="sm" x="693" y="120" text-anchor="middle">把右上角拆成</text>
+  <text class="sm" x="693" y="136" text-anchor="middle">左上 + 右下</text>
+  <path class="ln-a" d="M634 112 H620"/>
+  <text class="sm" x="390" y="338" text-anchor="middle">理想状态下，右上角应该是空的</text>
+</svg>
+<figcaption>图 7-1　四种代码。本章的全部内容，就是怎样把右上角清空</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; 一条值得贴在墙上的规则</div>
+  <p><strong>代码越重要、越复杂，它的协作者就应该越少。</strong></p>
+  <p>
+    消灭过度复杂的代码、只对领域模型和算法做单元测试 —— 这是通往高价值、易维护测试集的路。
+    这样做你不会有 100% 的覆盖率，但你也不需要。你的目标是：测试集里的<strong>每一个</strong>测试都在为项目贡献明显的价值。
+    记住：<strong>不写测试，也好过写一个坏测试。</strong>
+  </p>
+</div>
+
+<h2 id="humble">Humble Object 模式</h2>
+
+<p>
+  代码难测，往往是因为它和某个<strong>难测的依赖</strong>绑在了一起：异步或多线程执行、用户界面、与进程外依赖的通信，等等。
+  Gerard Meszaros 提出的 <strong>Humble Object（谦卑对象）</strong>模式是这样解决的：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="Humble Object 模式：重构前，逻辑和难测的依赖混在一起，测试不得不同时应付依赖。重构后，逻辑被抽到单独的类里可以直接测试，剩下的谦卑对象只负责把两者粘起来，薄到不需要测试">
+  <text class="ttl on-r" x="185" y="24" text-anchor="middle">重构前</text>
+  <rect class="bx-r" x="130" y="38" width="210" height="160" rx="12"/>
+  <text class="sm on-r" x="235" y="58" text-anchor="middle">过度复杂的代码</text>
+  <rect class="bx" x="150" y="70" width="170" height="48" rx="8"/><text class="lbl" x="235" y="99" text-anchor="middle">难测的依赖</text>
+  <rect class="bx-a" x="150" y="132" width="170" height="48" rx="8"/><text class="lbl on-a" x="235" y="161" text-anchor="middle">逻辑</text>
+  <rect class="bx" x="20" y="96" width="76" height="44" rx="22"/><text class="lbl" x="58" y="123" text-anchor="middle">测试</text>
+  <path class="ln-r" d="M98 118 H126" marker-end="url(#ar-r)"/>
+  <text class="sm" x="185" y="222" text-anchor="middle">想测逻辑，就得连依赖一起应付</text>
+
+  <text class="ttl on-g" x="575" y="24" text-anchor="middle">重构后</text>
+  <rect class="bx-d" x="430" y="46" width="130" height="56" rx="10"/>
+  <text class="lbl" x="495" y="70" text-anchor="middle">谦卑对象</text>
+  <text class="sm" x="495" y="88" text-anchor="middle">几乎没有逻辑</text>
+  <rect class="bx" x="610" y="46" width="130" height="56" rx="10"/><text class="lbl" x="675" y="79" text-anchor="middle">难测的依赖</text>
+  <path class="ln" d="M562 74 H606" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="610" y="140" width="130" height="56" rx="10"/><text class="lbl on-a" x="675" y="173" text-anchor="middle">逻辑</text>
+  <path class="ln" d="M530 104 L612 152" marker-end="url(#ar)"/>
+  <rect class="bx" x="430" y="146" width="76" height="44" rx="22"/><text class="lbl" x="468" y="173" text-anchor="middle">测试</text>
+  <path class="ln-g" d="M508 168 H606" marker-end="url(#ar-g)"/>
+  <text class="sm" x="575" y="222" text-anchor="middle">逻辑被单独拿出来测；谦卑对象薄到不用测</text>
+
+  <path class="ln-a" d="M356 118 H410" marker-end="url(#ar-a)"/>
+</svg>
+<figcaption>图 7-2　Humble Object：把可测的部分抽出来，剩下的只是一层薄薄的、「谦卑」的包装</figcaption>
+</figure>
+
+<p>
+  看着眼熟？因为你已经见过它两次了：<strong>六边形架构</strong>和<strong>函数式架构</strong>实现的都是这个模式。
+</p>
+<ul>
+  <li>六边形架构把业务逻辑和「与<em>进程外依赖</em>的通信」分开 —— 分别由领域层和应用服务层负责。</li>
+  <li>函数式架构更进一步，把业务逻辑和「与<em>所有协作者</em>的通信」分开。函数式核心没有任何协作者，所以它紧贴着四象限图的纵轴。</li>
+</ul>
+
+<h3>代码要么「深」，要么「宽」，不能两样都占</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="控制器是宽而浅的：协调很多依赖但自身不复杂。领域层是深而窄的：自身复杂但依赖很少">
+  <text class="ttl on-b" x="200" y="24" text-anchor="middle">控制器：宽而浅</text>
+  <rect class="bx-b" x="60" y="80" width="280" height="36" rx="8"/>
+  <text class="sm on-b" x="200" y="103" text-anchor="middle">复杂度低（块很矮）</text>
+  <path class="ln-b" d="M90 118 V160" marker-end="url(#ar-b)"/>
+  <path class="ln-b" d="M145 118 V160" marker-end="url(#ar-b)"/>
+  <path class="ln-b" d="M200 118 V160" marker-end="url(#ar-b)"/>
+  <path class="ln-b" d="M255 118 V160" marker-end="url(#ar-b)"/>
+  <path class="ln-b" d="M310 118 V160" marker-end="url(#ar-b)"/>
+  <text class="sm" x="200" y="184" text-anchor="middle">协调很多依赖（箭头很多）</text>
+  <text class="sm" x="200" y="204" text-anchor="middle">职责：编排（orchestration）</text>
+
+  <text class="ttl on-a" x="560" y="24" text-anchor="middle">领域层、算法：深而窄</text>
+  <rect class="bx-a" x="510" y="40" width="100" height="120" rx="8"/>
+  <text class="sm on-a" x="560" y="96" text-anchor="middle">复杂度高</text>
+  <text class="sm on-a" x="560" y="112" text-anchor="middle">（块很高）</text>
+  <path class="ln-a" d="M560 162 V178" marker-end="url(#ar-a)"/>
+  <text class="sm" x="560" y="198" text-anchor="middle">依赖很少（箭头很少）</text>
+  <text class="sm" x="560" y="214" text-anchor="middle">职责：业务逻辑</text>
+  <path class="ln" d="M380 30 V200" style="stroke-dasharray:2 5"/>
+</svg>
+<figcaption>图 7-3　深度代表复杂度，宽度代表协作者数量。同一段代码不能既深又宽</figcaption>
+</figure>
+
+<p>
+  也可以把 Humble Object 看作<strong>单一职责原则</strong>的应用。我们关心的是把<strong>业务逻辑</strong>和<strong>编排</strong>这两种职责分开。
+  很多耳熟能详的模式其实都是 Humble Object 的变体：
+  MVC / MVP 里的 Controller / Presenter 是谦卑对象，负责把视图和模型粘起来；
+  领域驱动设计里的<strong>聚合</strong>（Aggregate）通过把类分组成簇来减少类之间的连接。
+</p>
+
+<h2 id="crm">实战：重构一个 CRM 系统</h2>
+
+<p>
+  示例是一个管理用户注册的 CRM，所有用户存在数据库里。目前只有一个用例：<strong>修改用户的邮箱</strong>。涉及三条业务规则：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 190" role="img" aria-label="修改邮箱用例的三条业务规则">
+  <rect class="bx" x="14" y="20" width="230" height="150" rx="12"/>
+  <text class="ttl on-a" x="30" y="46">规则 ① 用户类型</text>
+  <text class="lbl" x="30" y="72">邮箱属于公司域名</text>
+  <text class="lbl" x="30" y="92">&rarr; 标记为<tspan font-weight="700">员工</tspan></text>
+  <text class="lbl" x="30" y="118">否则</text>
+  <text class="lbl" x="30" y="138">&rarr; 标记为<tspan font-weight="700">客户</tspan></text>
+
+  <rect class="bx" x="265" y="20" width="230" height="150" rx="12"/>
+  <text class="ttl on-a" x="281" y="46">规则 ② 员工人数</text>
+  <text class="lbl" x="281" y="72">系统要记录公司员工数。</text>
+  <text class="lbl" x="281" y="98">用户类型从员工变成客户</text>
+  <text class="lbl" x="281" y="118">（或反过来）时，</text>
+  <text class="lbl" x="281" y="138">这个数字要跟着 ±1</text>
+
+  <rect class="bx" x="516" y="20" width="230" height="150" rx="12"/>
+  <text class="ttl on-a" x="532" y="46">规则 ③ 对外通知</text>
+  <text class="lbl" x="532" y="72">邮箱变更后，</text>
+  <text class="lbl" x="532" y="92">往<tspan font-weight="700">消息总线</tspan>发一条消息，</text>
+  <text class="lbl" x="532" y="112">通知外部系统</text>
+</svg>
+<figcaption>图 7-4　「修改邮箱」这个用例的三条业务规则</figcaption>
+</figure>
+
+<h3>起点：一个「什么都干」的 User 类</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class User {
+    private int userId;
+    private String email;
+    private UserType type;
+
+    public void changeEmail(int userId, String newEmail) {
+        Object[] data = Database.getUserById(userId);          // 从数据库取出用户当前的邮箱和类型
+        this.userId = userId;
+        this.email = (String) data[1];
+        this.type = (UserType) data[2];
+
+        if (email.equals(newEmail)) return;
+
+        Object[] companyData = Database.getCompany();          // 从数据库取出公司域名和员工数
+        String companyDomainName = (String) companyData[0];
+        int numberOfEmployees = (int) companyData[1];
+
+        String emailDomain = newEmail.split("@")[1];
+        boolean isEmailCorporate = emailDomain.equals(companyDomainName);
+        UserType newType = isEmailCorporate                    // 根据新邮箱的域名决定用户类型
+            ? UserType.EMPLOYEE : UserType.CUSTOMER;
+
+        if (type != newType) {
+            int delta = newType == UserType.EMPLOYEE ? 1 : -1;
+            Database.saveCompany(numberOfEmployees + delta);   // 必要时更新员工数
+        }
+
+        this.email = newEmail;
+        this.type = newType;
+
+        Database.saveUser(this);                               // 把用户存回数据库
+        MessageBus.sendEmailChangedMessage(userId, newEmail);  // 往消息总线发通知
+    }
+}
+
+public enum UserType { CUSTOMER, EMPLOYEE }
+</pre></div>
+<div class="code" data-lang="python"><pre>
+from enum import Enum
+
+
+class UserType(Enum):
+    CUSTOMER = 1
+    EMPLOYEE = 2
+
+
+class User:
+    def change_email(self, user_id: int, new_email: str) -&gt; None:
+        data = Database.get_user_by_id(user_id)            # 从数据库取出用户当前的邮箱和类型
+        self.user_id = user_id
+        self.email = data[1]
+        self.type = UserType(data[2])
+
+        if self.email == new_email:
+            return
+
+        company_data = Database.get_company()              # 从数据库取出公司域名和员工数
+        company_domain_name = company_data[0]
+        number_of_employees = company_data[1]
+
+        email_domain = new_email.split("@")[1]
+        is_email_corporate = email_domain == company_domain_name
+        new_type = (UserType.EMPLOYEE if is_email_corporate   # 根据新邮箱的域名决定用户类型
+                    else UserType.CUSTOMER)
+
+        if self.type != new_type:
+            delta = 1 if new_type == UserType.EMPLOYEE else -1
+            Database.save_company(number_of_employees + delta)  # 必要时更新员工数
+
+        self.email = new_email
+        self.type = new_type
+
+        Database.save_user(self)                            # 把用户存回数据库
+        MessageBus.send_email_changed_message(user_id, new_email)  # 往消息总线发通知
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export enum UserType { Customer = 1, Employee = 2 }
+
+export class User {
+  userId = 0
+  email = ''
+  type = UserType.Customer
+
+  changeEmail(userId: number, newEmail: string): void {
+    const data = Database.getUserById(userId)              // 从数据库取出用户当前的邮箱和类型
+    this.userId = userId
+    this.email = data[1] as string
+    this.type = data[2] as UserType
+
+    if (this.email === newEmail) return
+
+    const companyData = Database.getCompany()              // 从数据库取出公司域名和员工数
+    const companyDomainName = companyData[0] as string
+    const numberOfEmployees = companyData[1] as number
+
+    const emailDomain = newEmail.split('@')[1]
+    const isEmailCorporate = emailDomain === companyDomainName
+    const newType = isEmailCorporate                       // 根据新邮箱的域名决定用户类型
+      ? UserType.Employee : UserType.Customer
+
+    if (this.type !== newType) {
+      const delta = newType === UserType.Employee ? 1 : -1
+      Database.saveCompany(numberOfEmployees + delta)      // 必要时更新员工数
+    }
+
+    this.email = newEmail
+    this.type = newType
+
+    Database.saveUser(this)                                // 把用户存回数据库
+    MessageBus.sendEmailChangedMessage(userId, newEmail)   // 往消息总线发通知
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 7.1 · 仓库 <code>code/Book/Chapter7/SampleProject/SampleProject.cs</code>（为简洁起见省略了邮箱格式校验等）</p>
+
+<p>用四象限分析一下：</p>
+<ul>
+  <li><strong>复杂度 / 领域重要性：高。</strong>决策点不多（用户算员工还是客户、员工数怎么变），但这些正是应用的核心业务逻辑。</li>
+  <li><strong>协作者：多。</strong>两个显式依赖 <code>userId</code> 和 <code>newEmail</code> 是值，不算；但两个<strong>隐式</strong>依赖 <code>Database</code> 和 <code>MessageBus</code> 是进程外协作者 —— 而前面说过，领域重要性高的代码不应该碰进程外协作者。</li>
+</ul>
+<p>结论：<strong>过度复杂的代码</strong>，右上角。</p>
+
+<div class="box note">
+  <div class="t">&#9432; Active Record 模式</div>
+  <p>
+    这种「领域类自己负责从数据库读取和保存自己」的做法叫 Active Record。在简单或短命的项目里没问题，
+    但代码库一大就撑不住 —— 原因正是业务逻辑和进程外通信这两种职责没有分开。
+  </p>
+</div>
+
+<h3>第 1 步：把隐式依赖变成显式依赖（不够）</h3>
+
+<p>
+  常规思路：给 <code>Database</code> 和 <code>MessageBus</code> 抽接口，注入 <code>User</code>，测试时 Mock。第 6 章审计系统的「Mock 版」就是这么做的。
+  这有帮助，但<strong>不够</strong>。
+</p>
+<p>
+  从四象限的角度看，领域模型是直接引用进程外依赖还是通过接口引用，<strong>没有区别</strong> —— 它们仍然是进程外的，
+  你仍然要维护一套复杂的 Mock 机制来测这个类。而且给数据库用 Mock 还会让测试变脆弱（下一章讲）。
+  更干净的做法是：<strong>领域模型完全不依赖进程外协作者，直接的、间接的都不要。</strong>
+</p>
+
+<h3>第 2 步：引入应用服务层</h3>
+
+<p>
+  把「与外部系统通信」的职责移到另一个类 —— 一个<strong>谦卑的控制器</strong>（六边形架构里叫应用服务）。
+  领域类只依赖进程内的东西：其他领域类，或者普通的值。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="应用服务，第 1 版（还有问题）"><pre>
+public class UserController {
+    private final Database database = new Database();
+    private final MessageBus messageBus = new MessageBus();
+
+    public void changeEmail(int userId, String newEmail) {
+        Object[] data = database.getUserById(userId);
+        String email = (String) data[1];
+        UserType type = (UserType) data[2];
+        var user = new User(userId, email, type);
+
+        Object[] companyData = database.getCompany();
+        String companyDomainName = (String) companyData[0];
+        int numberOfEmployees = (int) companyData[1];
+
+        int newNumberOfEmployees = user.changeEmail(
+            newEmail, companyDomainName, numberOfEmployees);
+
+        database.saveCompany(newNumberOfEmployees);
+        database.saveUser(user);
+        messageBus.sendEmailChangedMessage(userId, newEmail);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="应用服务，第 1 版（还有问题）"><pre>
+class UserController:
+    def __init__(self) -&gt; None:
+        self._database = Database()
+        self._message_bus = MessageBus()
+
+    def change_email(self, user_id: int, new_email: str) -&gt; None:
+        data = self._database.get_user_by_id(user_id)
+        email = data[1]
+        user_type = UserType(data[2])
+        user = User(user_id, email, user_type)
+
+        company_data = self._database.get_company()
+        company_domain_name = company_data[0]
+        number_of_employees = company_data[1]
+
+        new_number_of_employees = user.change_email(
+            new_email, company_domain_name, number_of_employees)
+
+        self._database.save_company(new_number_of_employees)
+        self._database.save_user(user)
+        self._message_bus.send_email_changed_message(user_id, new_email)
+</pre></div>
+<div class="code" data-lang="ts" data-file="应用服务，第 1 版（还有问题）"><pre>
+export class UserController {
+  private readonly database = new Database()
+  private readonly messageBus = new MessageBus()
+
+  changeEmail(userId: number, newEmail: string): void {
+    const data = this.database.getUserById(userId)
+    const email = data[1] as string
+    const type = data[2] as UserType
+    const user = new User(userId, email, type)
+
+    const companyData = this.database.getCompany()
+    const companyDomainName = companyData[0] as string
+    const numberOfEmployees = companyData[1] as number
+
+    const newNumberOfEmployees = user.changeEmail(
+      newEmail, companyDomainName, numberOfEmployees)
+
+    this.database.saveCompany(newNumberOfEmployees)
+    this.database.saveUser(user)
+    this.messageBus.sendEmailChangedMessage(userId, newEmail)
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 7.2 · 仓库 <code>code/Book/Chapter7/Refactored_1/Refactored_1.cs</code></p>
+
+<p>
+  <code>User</code> 现在很好测了 —— 它不再和任何进程外依赖通信，事实上它<strong>一个协作者都没有</strong>。但控制器还有四个问题：
+</p>
+<ol>
+  <li>进程外依赖是直接 <code>new</code> 出来的，不是注入的 —— 以后写集成测试会碍事。</li>
+  <li>控制器从数据库原始数据<strong>重建</strong> <code>User</code> 对象。这是有一定复杂度的逻辑，不该放在只负责编排的应用服务里。</li>
+  <li>公司数据同理。而且 <code>User</code> 现在要<strong>返回更新后的员工数</strong> —— 这很别扭：公司员工数和某个具体用户有什么关系？这个职责放错了地方。</li>
+  <li>不管邮箱变没变，控制器都无条件地保存数据、发消息。</li>
+</ol>
+
+<h3>第 3 步：把复杂度从应用服务里拿走</h3>
+
+<p>
+  重建对象的逻辑，如果用了 ORM 就交给 ORM 的映射配置；没用的话，在领域模型里建一个<strong>工厂</strong>：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class UserFactory {
+    public static User create(Object[] data) {
+        Precondition.requires(data.length &gt;= 3);
+
+        int id = (int) data[0];
+        String email = (String) data[1];
+        UserType type = (UserType) data[2];
+
+        return new User(id, email, type);
+    }
+}
+
+public final class Precondition {
+    public static void requires(boolean condition) {
+        if (!condition) throw new IllegalStateException();
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class UserFactory:
+    @staticmethod
+    def create(data: list) -&gt; User:
+        Precondition.requires(len(data) &gt;= 3)
+
+        user_id = int(data[0])
+        email = str(data[1])
+        user_type = UserType(data[2])
+
+        return User(user_id, email, user_type)
+
+
+class Precondition:
+    @staticmethod
+    def requires(condition: bool) -&gt; None:
+        if not condition:
+            raise RuntimeError("Precondition failed")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class UserFactory {
+  static create(data: unknown[]): User {
+    Precondition.requires(data.length &gt;= 3)
+
+    const id = data[0] as number
+    const email = data[1] as string
+    const type = data[2] as UserType
+
+    return new User(id, email, type)
+  }
+}
+
+export class Precondition {
+  static requires(condition: boolean): void {
+    if (!condition) throw new Error('Precondition failed')
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 7.3 · 仓库 <code>code/Book/Chapter7/Refactored_2/Refactored_2.cs</code></p>
+
+<div class="box deep">
+  <div class="t">&#128300; 只有一个分支，凭什么说它「复杂」？</div>
+  <p>
+    还记得第 1 章说的吗？代码调用的库里藏着很多<strong>看不见的分支</strong>。按下标取数组元素（<code>data[0]</code>）、类型转换，
+    运行时内部都在做决定：是正常返回，还是抛越界 / 类型转换异常？这些隐藏分支让重建逻辑值得测试，尽管它表面上没什么决策点。
+  </p>
+  <p>不过注意：这段逻辑有一定复杂度，却<strong>没有领域重要性</strong> —— 它和「改邮箱」这个客户目标没有直接关系。它是前面说的<strong>工具类代码</strong>。</p>
+</div>
+
+<h3>第 4 步：引入 Company 类</h3>
+
+<p>
+  「<code>User</code> 返回更新后的员工数」这种别扭，是<strong>职责放错位置</strong>的信号，而这又是<strong>缺少一个抽象</strong>的信号。
+  补上它：一个把公司相关的数据和逻辑捆在一起的 <code>Company</code> 领域类。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class Company {
+    private final String domainName;
+    private int numberOfEmployees;
+
+    public Company(String domainName, int numberOfEmployees) {
+        this.domainName = domainName;
+        this.numberOfEmployees = numberOfEmployees;
+    }
+
+    public void changeNumberOfEmployees(int delta) {
+        Precondition.requires(numberOfEmployees + delta &gt;= 0);
+        numberOfEmployees += delta;
+    }
+
+    public boolean isEmailCorporate(String email) {
+        String emailDomain = email.split("@")[1];
+        return emailDomain.equals(domainName);
+    }
+
+    public int getNumberOfEmployees() { return numberOfEmployees; }
+}
+
+public class User {
+    private final int userId;
+    private String email;
+    private UserType type;
+    /* 构造函数与 getter 略 */
+
+    public void changeEmail(String newEmail, Company company) {
+        if (email.equals(newEmail)) return;
+
+        UserType newType = company.isEmailCorporate(newEmail)
+            ? UserType.EMPLOYEE : UserType.CUSTOMER;
+
+        if (type != newType) {
+            int delta = newType == UserType.EMPLOYEE ? 1 : -1;
+            company.changeNumberOfEmployees(delta);
+        }
+
+        email = newEmail;
+        type = newType;
+    }
+}
+
+public class UserController {
+    private final Database database = new Database();
+    private final MessageBus messageBus = new MessageBus();
+
+    public void changeEmail(int userId, String newEmail) {
+        Object[] userData = database.getUserById(userId);
+        User user = UserFactory.create(userData);
+
+        Object[] companyData = database.getCompany();
+        Company company = CompanyFactory.create(companyData);
+
+        user.changeEmail(newEmail, company);
+
+        database.saveCompany(company);
+        database.saveUser(user);
+        messageBus.sendEmailChangedMessage(userId, newEmail);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class Company:
+    def __init__(self, domain_name: str, number_of_employees: int) -&gt; None:
+        self.domain_name = domain_name
+        self.number_of_employees = number_of_employees
+
+    def change_number_of_employees(self, delta: int) -&gt; None:
+        Precondition.requires(self.number_of_employees + delta &gt;= 0)
+        self.number_of_employees += delta
+
+    def is_email_corporate(self, email: str) -&gt; bool:
+        email_domain = email.split("@")[1]
+        return email_domain == self.domain_name
+
+
+class User:
+    def __init__(self, user_id: int, email: str, user_type: UserType) -&gt; None:
+        self.user_id = user_id
+        self.email = email
+        self.type = user_type
+
+    def change_email(self, new_email: str, company: Company) -&gt; None:
+        if self.email == new_email:
+            return
+
+        new_type = (UserType.EMPLOYEE if company.is_email_corporate(new_email)
+                    else UserType.CUSTOMER)
+
+        if self.type != new_type:
+            delta = 1 if new_type == UserType.EMPLOYEE else -1
+            company.change_number_of_employees(delta)
+
+        self.email = new_email
+        self.type = new_type
+
+
+class UserController:
+    def __init__(self) -&gt; None:
+        self._database = Database()
+        self._message_bus = MessageBus()
+
+    def change_email(self, user_id: int, new_email: str) -&gt; None:
+        user_data = self._database.get_user_by_id(user_id)
+        user = UserFactory.create(user_data)
+
+        company_data = self._database.get_company()
+        company = CompanyFactory.create(company_data)
+
+        user.change_email(new_email, company)
+
+        self._database.save_company(company)
+        self._database.save_user(user)
+        self._message_bus.send_email_changed_message(user_id, new_email)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class Company {
+  constructor(
+    readonly domainName: string,
+    private _numberOfEmployees: number,
+  ) {}
+
+  get numberOfEmployees(): number { return this._numberOfEmployees }
+
+  changeNumberOfEmployees(delta: number): void {
+    Precondition.requires(this._numberOfEmployees + delta &gt;= 0)
+    this._numberOfEmployees += delta
+  }
+
+  isEmailCorporate(email: string): boolean {
+    const emailDomain = email.split('@')[1]
+    return emailDomain === this.domainName
+  }
+}
+
+export class User {
+  constructor(
+    readonly userId: number,
+    public email: string,
+    public type: UserType,
+  ) {}
+
+  changeEmail(newEmail: string, company: Company): void {
+    if (this.email === newEmail) return
+
+    const newType = company.isEmailCorporate(newEmail)
+      ? UserType.Employee : UserType.Customer
+
+    if (this.type !== newType) {
+      const delta = newType === UserType.Employee ? 1 : -1
+      company.changeNumberOfEmployees(delta)
+    }
+
+    this.email = newEmail
+    this.type = newType
+  }
+}
+
+export class UserController {
+  private readonly database = new Database()
+  private readonly messageBus = new MessageBus()
+
+  changeEmail(userId: number, newEmail: string): void {
+    const userData = this.database.getUserById(userId)
+    const user = UserFactory.create(userData)
+
+    const companyData = this.database.getCompany()
+    const company = CompanyFactory.create(companyData)
+
+    user.changeEmail(newEmail, company)
+
+    this.database.saveCompany(company)
+    this.database.saveUser(user)
+    this.messageBus.sendEmailChangedMessage(userId, newEmail)
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 7.4–7.6 · 仓库 <code>code/Book/Chapter7/Refactored_3/Refactored_3.cs</code></p>
+
+<p>
+  <code>Company</code> 的两个方法体现了第 5 章提到的 <strong>Tell-Don't-Ask</strong>：<code>User</code> 是<strong>告诉</strong>公司「把员工数改一下」
+  「判断一下这个邮箱是不是公司的」，而不是把原始数据<strong>要</strong>过来自己算。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="三张小四象限图展示重构过程中各个类的位置变化：起点时 User 在右上角；第二步后 User 移到左上角紧贴纵轴，UserController 在右下角但接近上边界；第四步后 Company 和工厂在左上角贴着纵轴，User 略偏右，UserController 稳稳落在右下角">
+  <text class="ttl" x="125" y="22" text-anchor="middle">起点</text>
+  <path class="ln" d="M30 40 V230 H230"/>
+  <rect class="bx-d" x="34" y="44" width="94" height="88" rx="6"/><rect class="bx-d" x="132" y="44" width="94" height="88" rx="6"/>
+  <rect class="bx-d" x="34" y="136" width="94" height="88" rx="6"/><rect class="bx-d" x="132" y="136" width="94" height="88" rx="6"/>
+  <circle cx="186" cy="80" r="8" fill="var(--red)"/>
+  <text class="lbl on-r" x="186" y="108" text-anchor="middle">User</text>
+  <text class="sm" x="125" y="252" text-anchor="middle">User 什么都干：</text>
+  <text class="sm" x="125" y="268" text-anchor="middle">过度复杂</text>
+
+  <text class="ttl" x="380" y="22" text-anchor="middle">第 2 步之后</text>
+  <path class="ln" d="M285 40 V230 H485"/>
+  <rect class="bx-d" x="289" y="44" width="94" height="88" rx="6"/><rect class="bx-d" x="387" y="44" width="94" height="88" rx="6"/>
+  <rect class="bx-d" x="289" y="136" width="94" height="88" rx="6"/><rect class="bx-d" x="387" y="136" width="94" height="88" rx="6"/>
+  <circle cx="300" cy="78" r="8" fill="var(--green)"/>
+  <text class="lbl on-g" x="314" y="82">User</text>
+  <circle cx="436" cy="146" r="8" fill="var(--accent)"/>
+  <text class="lbl on-a" x="436" y="174" text-anchor="middle">UserController</text>
+  <text class="sm" x="380" y="252" text-anchor="middle">User 没有协作者了；</text>
+  <text class="sm" x="380" y="268" text-anchor="middle">但控制器里还有复杂逻辑，压着线</text>
+
+  <text class="ttl" x="635" y="22" text-anchor="middle">第 4 步之后</text>
+  <path class="ln" d="M540 40 V230 H740"/>
+  <rect class="bx-d" x="544" y="44" width="94" height="88" rx="6"/><rect class="bx-d" x="642" y="44" width="94" height="88" rx="6"/>
+  <rect class="bx-d" x="544" y="136" width="94" height="88" rx="6"/><rect class="bx-d" x="642" y="136" width="94" height="88" rx="6"/>
+  <circle cx="554" cy="62" r="7" fill="var(--green)"/>
+  <text class="sm on-g" x="566" y="66">Company 等</text>
+  <circle cx="580" cy="98" r="8" fill="var(--green)"/>
+  <text class="lbl on-g" x="594" y="102">User</text>
+  <circle cx="690" cy="192" r="8" fill="var(--blue)"/>
+  <text class="lbl on-b" x="690" y="170" text-anchor="middle">UserController</text>
+  <text class="sm" x="635" y="252" text-anchor="middle">User 多了一个协作者（Company），略右移；</text>
+  <text class="sm" x="635" y="268" text-anchor="middle">控制器只剩编排，稳稳落在右下角</text>
+
+  <path class="ln-a" d="M240 134 H272" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M495 134 H527" marker-end="url(#ar-a)"/>
+</svg>
+<figcaption>图 7-5　各个类在四象限里的迁移轨迹（纵轴：复杂度 / 领域重要性；横轴：协作者数量）</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; 和第 6 章的函数式架构比一比</div>
+  <p>
+    <strong>相同点</strong>：审计系统的函数式核心和 CRM 的领域层都不和进程外依赖通信；应用服务层负责取原始数据、交给核心 / 领域模型、再把结果存回去。
+  </p>
+  <p>
+    <strong>不同点</strong>：函数式核心完全没有副作用。CRM 的领域模型<em>有</em>副作用（改了用户邮箱、改了员工数），
+    但这些副作用<strong>一直留在内存里</strong>，直到控制器把 <code>User</code> 和 <code>Company</code> 存进数据库的那一刻才越过领域模型的边界。
+  </p>
+  <p>
+    副作用直到最后一刻都留在内存里，这对可测试性帮助极大：测试不用检查进程外依赖，也不用基于通信的测试，
+    全部验证都可以对内存中的对象用基于输出和基于状态的方式完成。
+  </p>
+</div>
+
+<h2 id="coverage">重构之后：哪些该测、怎么测</h2>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>协作者少</th><th>协作者多</th></tr>
+  <tr>
+    <td><strong>复杂度或<br>领域重要性高</strong></td>
+    <td style="background:var(--green-bg)"><code>User.changeEmail(newEmail, company)</code><br><code>Company.changeNumberOfEmployees(delta)</code><br><code>Company.isEmailCorporate(email)</code><br><code>UserFactory.create(data)</code>、<code>CompanyFactory.create(data)</code><br><strong style="color:var(--green)">&rarr; 重点单元测试</strong></td>
+    <td><span style="color:var(--fg-faint)">（空 —— 已经全部拆走了）</span></td>
+  </tr>
+  <tr>
+    <td><strong>复杂度和<br>领域重要性低</strong></td>
+    <td><code>User</code> 和 <code>Company</code> 的构造函数<br><span style="color:var(--fg-faint)">&rarr; 不测</span></td>
+    <td style="background:var(--blue-bg)"><code>UserController.changeEmail(userId, newEmail)</code><br><strong style="color:var(--blue)">&rarr; 集成测试（下一章）</strong></td>
+  </tr>
+</table>
+</div>
+
+<h3>测试领域层</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void changing_email_from_non_corporate_to_corporate() {
+    var company = new Company("mycorp.com", 1);
+    var sut = new User(1, "user@gmail.com", UserType.CUSTOMER);
+
+    sut.changeEmail("new@mycorp.com", company);
+
+    assertThat(company.getNumberOfEmployees()).isEqualTo(2);
+    assertThat(sut.getEmail()).isEqualTo("new@mycorp.com");
+    assertThat(sut.getType()).isEqualTo(UserType.EMPLOYEE);
+}
+
+// 要完整覆盖，还需要三个类似的测试：
+// changing_email_from_corporate_to_non_corporate()
+// changing_email_without_changing_user_type()
+// changing_email_to_the_same_one()
+
+@ParameterizedTest
+@CsvSource({
+    "mycorp.com, email@mycorp.com, true",
+    "mycorp.com, email@gmail.com,  false"
+})
+void differentiates_a_corporate_email_from_non_corporate(
+        String domain, String email, boolean expectedResult) {
+    var sut = new Company(domain, 0);
+
+    boolean isEmailCorporate = sut.isEmailCorporate(email);
+
+    assertThat(isEmailCorporate).isEqualTo(expectedResult);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_changing_email_from_non_corporate_to_corporate():
+    company = Company("mycorp.com", 1)
+    sut = User(1, "user@gmail.com", UserType.CUSTOMER)
+
+    sut.change_email("new@mycorp.com", company)
+
+    assert company.number_of_employees == 2
+    assert sut.email == "new@mycorp.com"
+    assert sut.type == UserType.EMPLOYEE
+
+
+# 要完整覆盖，还需要三个类似的测试：
+# test_changing_email_from_corporate_to_non_corporate()
+# test_changing_email_without_changing_user_type()
+# test_changing_email_to_the_same_one()
+
+@pytest.mark.parametrize("domain, email, expected_result", [
+    ("mycorp.com", "email@mycorp.com", True),
+    ("mycorp.com", "email@gmail.com", False),
+])
+def test_differentiates_a_corporate_email_from_non_corporate(
+        domain, email, expected_result):
+    sut = Company(domain, 0)
+
+    is_email_corporate = sut.is_email_corporate(email)
+
+    assert is_email_corporate == expected_result
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changing email from non corporate to corporate', () =&gt; {
+  const company = new Company('mycorp.com', 1)
+  const sut = new User(1, 'user@gmail.com', UserType.Customer)
+
+  sut.changeEmail('new@mycorp.com', company)
+
+  expect(company.numberOfEmployees).toBe(2)
+  expect(sut.email).toBe('new@mycorp.com')
+  expect(sut.type).toBe(UserType.Employee)
+})
+
+// 要完整覆盖，还需要三个类似的测试：
+// 'changing email from corporate to non corporate'
+// 'changing email without changing user type'
+// 'changing email to the same one'
+
+test.each([
+  ['mycorp.com', 'email@mycorp.com', true],
+  ['mycorp.com', 'email@gmail.com', false],
+])('differentiates a corporate email from non corporate', (domain, email, expectedResult) =&gt; {
+  const sut = new Company(domain, 0)
+
+  const isEmailCorporate = sut.isEmailCorporate(email)
+
+  expect(isEmailCorporate).toBe(expectedResult)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 7.3.1 节</p>
+
+<p>没有 Mock，没有数据库，几行就写完一个 —— 这就是左上角象限的测试该有的样子。</p>
+
+<h3>要不要测前置条件</h3>
+
+<p>
+  <code>changeNumberOfEmployees</code> 里有个前置条件：员工数不能变成负数。这种防护只在异常情况（通常是代码有 Bug）下才会触发，
+  目的是让软件<strong>快速失败</strong>，不让错误扩散并写进数据库。这种东西要测吗？
+</p>
+
+<div class="tw">
+<table>
+  <tr><th>前置条件</th><th>有领域意义吗</th><th>测不测</th></tr>
+  <tr><td><code>Company</code>：员工数不能为负</td><td>有 —— 它是 <code>Company</code> 的不变量</td><td style="color:var(--green);font-weight:700">测</td></tr>
+  <tr><td><code>UserFactory</code>：<code>data.length &gt;= 3</code></td><td>没有 —— 纯技术性检查</td><td>不测</td></tr>
+</table>
+</div>
+
+<h2 id="conditional">难题：控制器里的条件逻辑</h2>
+
+<p>业务逻辑和编排的分离，在业务操作有<strong>清晰的三个阶段</strong>时效果最好：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 280" role="img" aria-label="理想情况下业务操作分三阶段：读数据、执行业务逻辑、写数据。现实中常常需要在决策中途再去读数据，三阶段被打断">
+  <text class="ttl on-g" x="190" y="24" text-anchor="middle">&#10003; 理想：三个阶段界限分明</text>
+  <rect class="bx" x="20" y="100" width="90" height="70" rx="8"/><text class="sm" x="65" y="130" text-anchor="middle">进程外依赖</text><text class="sm" x="65" y="148" text-anchor="middle">数据库等</text>
+  <rect class="bx-b" x="150" y="100" width="90" height="70" rx="8"/><text class="lbl on-b" x="195" y="130" text-anchor="middle">应用服务</text><text class="sm" x="195" y="148" text-anchor="middle">（控制器）</text>
+  <rect class="bx-a" x="280" y="100" width="90" height="70" rx="8"/><text class="lbl on-a" x="325" y="130" text-anchor="middle">业务逻辑</text><text class="sm" x="325" y="148" text-anchor="middle">（领域模型）</text>
+  <path class="ln" d="M112 116 H146" marker-end="url(#ar)"/><text class="sm" x="129" y="108" text-anchor="middle">① 读</text>
+  <path class="ln-a" d="M242 135 H276" marker-end="url(#ar-a)"/><text class="sm on-a" x="259" y="127" text-anchor="middle">② 调用</text>
+  <path class="ln" d="M146 154 H114" marker-end="url(#ar)"/><text class="sm" x="129" y="174" text-anchor="middle">③ 写</text>
+  <text class="sm" x="190" y="204" text-anchor="middle">所有对进程外依赖的访问都在两端</text>
+
+  <path class="ln" d="M390 20 V250" style="stroke-dasharray:2 5"/>
+
+  <text class="ttl on-r" x="575" y="24" text-anchor="middle">&#10007; 现实：中途还要再读</text>
+  <rect class="bx" x="410" y="60" width="90" height="170" rx="8"/><text class="sm" x="455" y="140" text-anchor="middle">进程外依赖</text><text class="sm" x="455" y="158" text-anchor="middle">数据库等</text>
+  <rect class="bx-b" x="540" y="60" width="90" height="170" rx="8"/><text class="lbl on-b" x="585" y="140" text-anchor="middle">应用服务</text><text class="sm" x="585" y="158" text-anchor="middle">（控制器）</text>
+  <rect class="bx-a" x="670" y="60" width="80" height="170" rx="8"/><text class="lbl on-a" x="710" y="140" text-anchor="middle">业务逻辑</text>
+  <path class="ln" d="M502 80 H536" marker-end="url(#ar)"/><text class="sm" x="519" y="72" text-anchor="middle">读</text>
+  <path class="ln-a" d="M632 100 H666" marker-end="url(#ar-a)"/><text class="sm on-a" x="649" y="92" text-anchor="middle">调用 1</text>
+  <path class="ln-r" d="M502 134 H536" marker-end="url(#ar-r)"/><text class="sm on-r" x="519" y="126" text-anchor="middle">再读</text>
+  <path class="ln-a" d="M632 180 H666" marker-end="url(#ar-a)"/><text class="sm on-a" x="649" y="172" text-anchor="middle">调用 2</text>
+  <path class="ln" d="M536 212 H504" marker-end="url(#ar)"/><text class="sm" x="519" y="204" text-anchor="middle">写</text>
+  <text class="sm" x="575" y="256" text-anchor="middle">要不要「再读」，取决于调用 1 的中间结果</text>
+</svg>
+<figcaption>图 7-6　六边形 / 函数式架构在「读 — 决定 — 写」界限分明时最顺手，但现实常常不配合</figcaption>
+</figure>
+
+<p>遇到右边这种情况，你有三个选择，而每个选择都只能在三个属性里保住两个：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 340" role="img" aria-label="三角形的三个顶点是控制器简单、领域模型可测、性能。每条边代表一种方案，只能同时满足相邻的两个顶点">
+  <path d="M380 50 L170 270 L590 270 Z" style="fill:var(--panel);stroke:var(--line-2);stroke-width:1.5"/>
+  <rect class="bx-b" x="300" y="14" width="160" height="40" rx="20"/><text class="ttl on-b" x="380" y="39" text-anchor="middle">控制器简单</text>
+  <rect class="bx-g" x="80" y="262" width="170" height="40" rx="20"/><text class="ttl on-g" x="165" y="287" text-anchor="middle">领域模型可测</text>
+  <rect class="bx-p" x="520" y="262" width="140" height="40" rx="20"/><text class="ttl on-p" x="590" y="287" text-anchor="middle">性能</text>
+
+  <rect class="bx" x="14" y="110" width="218" height="74" rx="10"/>
+  <text class="lbl" x="26" y="132">方案 A：读写全推到两端</text>
+  <text class="sm" x="26" y="152">不管用不用得上，都先读出来</text>
+  <text class="sm on-r" x="26" y="170">牺牲：性能</text>
+  <path class="ln-d" d="M234 150 L272 160"/>
+
+  <rect class="bx" x="528" y="110" width="218" height="74" rx="10"/>
+  <text class="lbl" x="540" y="132">方案 B：把依赖注入领域模型</text>
+  <text class="sm" x="540" y="152">让业务逻辑自己决定何时调用</text>
+  <text class="sm on-r" x="540" y="170">牺牲：领域模型可测（别这么做）</text>
+  <path class="ln-d" d="M526 150 L488 160"/>
+
+  <rect class="bx-a" x="262" y="196" width="236" height="62" rx="10"/>
+  <text class="lbl on-a" x="380" y="218" text-anchor="middle">方案 C：把决策拆成更细的步骤 &#9733;</text>
+  <text class="sm" x="380" y="238" text-anchor="middle">控制器分步调用领域模型</text>
+  <text class="sm on-r" x="380" y="252" text-anchor="middle">牺牲：控制器简单（可以缓解）</text>
+  <path class="ln-a" d="M380 260 V268"/>
+  <text class="sm" x="380" y="328" text-anchor="middle">每个方案贴着三角形的一条边：保住这条边两端的属性，放弃对面的那个</text>
+</svg>
+<figcaption>图 7-7　三选二。多数项目里性能很重要（排除 A），B 会把代码推回过度复杂象限，所以通常选 C</figcaption>
+</figure>
+
+<p>
+  选了方案 C，控制器会变复杂一些，往过度复杂象限靠近。有两个模式可以把这种复杂度控制住。
+</p>
+
+<h3>CanExecute / Execute 模式</h3>
+
+<p>
+  给 CRM 加一个新需求：<strong>用户确认邮箱之后，就不能再改了。</strong>试图修改已确认的邮箱，应该看到一条错误信息。
+  这个检查放在哪儿？
+</p>
+
+<div class="tw">
+<table>
+  <tr><th>放哪</th><th>结果</th></tr>
+  <tr><td><strong>放进 <code>User.changeEmail()</code></strong>，让它返回错误</td><td>控制器保持简单，但<strong>损失性能</strong>：即使邮箱已确认、根本改不了，<code>Company</code> 也已经无条件从数据库读出来了（这就是方案 A）</td></tr>
+  <tr><td><strong>放进控制器</strong>：先判断 <code>user.isEmailConfirmed</code> 再去读 <code>Company</code></td><td>性能好，但<strong>决策被拆成了两半</strong>（「能不能改」在控制器，「怎么改」在 <code>User</code>），而且现在不检查标志也能改邮箱 —— 封装被破坏了</td></tr>
+</table>
+</div>
+
+<p>
+  第三种办法：在 <code>User</code> 里加一个 <code>canChangeEmail()</code> 方法，并把「它返回成功」作为 <code>changeEmail()</code> 的<strong>前置条件</strong>：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// User
+public String canChangeEmail() {
+    if (isEmailConfirmed) return "Can't change a confirmed email";
+    return null;
+}
+
+public void changeEmail(String newEmail, Company company) {
+    Precondition.requires(canChangeEmail() == null);
+
+    /* 方法其余部分 */
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# User
+def can_change_email(self) -&gt; str | None:
+    if self.is_email_confirmed:
+        return "Can't change a confirmed email"
+    return None
+
+def change_email(self, new_email: str, company: Company) -&gt; None:
+    Precondition.requires(self.can_change_email() is None)
+
+    ...  # 方法其余部分
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// User
+canChangeEmail(): string | null {
+  if (this.isEmailConfirmed) return "Can't change a confirmed email"
+  return null
+}
+
+changeEmail(newEmail: string, company: Company): void {
+  Precondition.requires(this.canChangeEmail() === null)
+
+  /* 方法其余部分 */
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 7.10 · 仓库 <code>code/Book/Chapter7/CanExecute/CanExecute.cs</code>（为简单起见用字符串表示错误；真实项目里可以用专门的 Result 类型）</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="CanExecute/Execute 模式的流程：控制器先调用 canChangeEmail，如果返回错误就直接返回，不读公司数据；否则读公司数据再调用 changeEmail。changeEmail 内部用前置条件保证 canChangeEmail 一定已经通过">
+  <rect class="bx-b" x="14" y="20" width="150" height="46" rx="8"/><text class="lbl on-b" x="89" y="48" text-anchor="middle">控制器：读 User</text>
+  <path class="ln" d="M166 43 H196" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="200" y="14" width="190" height="58" rx="8"/>
+  <text class="mono on-a" x="295" y="38" text-anchor="middle">user.canChangeEmail()</text>
+  <text class="sm" x="295" y="58" text-anchor="middle">所有校验都封装在领域层</text>
+
+  <path class="ln-r" d="M392 30 H452" marker-end="url(#ar-r)"/>
+  <text class="sm on-r" x="422" y="22" text-anchor="middle">有错误</text>
+  <rect class="bx-r" x="456" y="10" width="290" height="40" rx="8"/>
+  <text class="lbl on-r" x="601" y="35" text-anchor="middle">直接返回错误，根本不去读 Company &#10003; 性能</text>
+
+  <path class="ln-g" d="M295 74 V104" marker-end="url(#ar-g)"/>
+  <text class="sm on-g" x="305" y="94">没有错误</text>
+  <rect class="bx-b" x="200" y="108" width="190" height="40" rx="8"/><text class="lbl on-b" x="295" y="133" text-anchor="middle">控制器：读 Company</text>
+  <path class="ln" d="M392 128 H452" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="456" y="98" width="290" height="60" rx="8"/>
+  <text class="mono on-a" x="601" y="122" text-anchor="middle">user.changeEmail(newEmail, company)</text>
+  <text class="sm" x="601" y="142" text-anchor="middle">内部前置条件：canChangeEmail() 必须为 null</text>
+
+  <rect class="bx-g" x="14" y="172" width="732" height="38" rx="8"/>
+  <text class="sm on-g" x="380" y="196" text-anchor="middle">&#10003; 封装：就算控制器忘了先调 canChangeEmail()，changeEmail() 也会因前置条件而失败 —— 不可能绕过检查</text>
+</svg>
+<figcaption>图 7-8　CanExecute/Execute：一个「能不能做」的方法配一个「做」的方法，前者是后者的前置条件</figcaption>
+</figure>
+
+<p>这带来两个好处：</p>
+<ul>
+  <li>控制器不需要了解改邮箱的任何规则，只管问一句 <code>canChangeEmail()</code>。这个方法里可以有很多条校验，全都封装在领域层。</li>
+  <li><code>changeEmail()</code> 里的前置条件保证了：不先确认「能改」，邮箱就绝不会被改。</li>
+</ul>
+<p>
+  于是所有决策都集中回了领域层。控制器里虽然还有一个 <code>if</code>，但它<strong>没有不检查的选项</strong>，所以这个 <code>if</code> 不算新的决策点，也不需要专门测 ——
+  对 <code>User</code> 里的前置条件做单元测试就够了。
+</p>
+
+<h3>用领域事件追踪领域模型里的变化</h3>
+
+<p>
+  现在的实现有个 Bug：<strong>即使邮箱没变（新旧相同），控制器照样会往消息总线发消息。</strong>
+  把「新旧是否相同」的检查挪到控制器里？又是业务逻辑碎片化。放进 <code>canChangeEmail()</code>？不行 —— 新旧相同不该算错误。
+</p>
+
+<div class="term">
+  <b class="w">领域事件（domain event）</b>
+  <p>
+    描述应用中发生的、对<strong>领域专家有意义</strong>的事件（这是它和按钮点击之类普通事件的区别）。
+    常用来把系统里发生的重要变化通知给外部应用。从实现上看，它就是一个携带通知所需数据的类。
+    领域事件是<strong>值</strong> —— 不可变、可互换；命名一律用<strong>过去时</strong>，因为它表示已经发生的事。
+  </p>
+</div>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public record EmailChangedEvent(int userId, String newEmail) {}
+
+// User
+private final List&lt;EmailChangedEvent&gt; emailChangedEvents = new ArrayList&lt;&gt;();
+
+public void changeEmail(String newEmail, Company company) {
+    Precondition.requires(canChangeEmail() == null);
+
+    if (email.equals(newEmail)) return;
+
+    UserType newType = company.isEmailCorporate(newEmail)
+        ? UserType.EMPLOYEE : UserType.CUSTOMER;
+
+    if (type != newType) {
+        int delta = newType == UserType.EMPLOYEE ? 1 : -1;
+        company.changeNumberOfEmployees(delta);
+    }
+
+    email = newEmail;
+    type = newType;
+    emailChangedEvents.add(new EmailChangedEvent(userId, newEmail));   // 记下「邮箱变了」
+}
+
+// UserController
+public String changeEmail(int userId, String newEmail) {
+    Object[] userData = database.getUserById(userId);
+    User user = UserFactory.create(userData);
+
+    String error = user.canChangeEmail();
+    if (error != null) return error;
+
+    Object[] companyData = database.getCompany();
+    Company company = CompanyFactory.create(companyData);
+
+    user.changeEmail(newEmail, company);
+
+    database.saveCompany(company);
+    database.saveUser(user);
+    for (EmailChangedEvent ev : user.getEmailChangedEvents()) {       // 把事件转成总线上的消息
+        messageBus.sendEmailChangedMessage(ev.userId(), ev.newEmail());
+    }
+
+    return "OK";
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+@dataclass(frozen=True)
+class EmailChangedEvent:
+    user_id: int
+    new_email: str
+
+
+# User
+def change_email(self, new_email: str, company: Company) -&gt; None:
+    Precondition.requires(self.can_change_email() is None)
+
+    if self.email == new_email:
+        return
+
+    new_type = (UserType.EMPLOYEE if company.is_email_corporate(new_email)
+                else UserType.CUSTOMER)
+
+    if self.type != new_type:
+        delta = 1 if new_type == UserType.EMPLOYEE else -1
+        company.change_number_of_employees(delta)
+
+    self.email = new_email
+    self.type = new_type
+    self.email_changed_events.append(                    # 记下「邮箱变了」
+        EmailChangedEvent(self.user_id, new_email))
+
+
+# UserController
+def change_email(self, user_id: int, new_email: str) -&gt; str:
+    user_data = self._database.get_user_by_id(user_id)
+    user = UserFactory.create(user_data)
+
+    error = user.can_change_email()
+    if error is not None:
+        return error
+
+    company_data = self._database.get_company()
+    company = CompanyFactory.create(company_data)
+
+    user.change_email(new_email, company)
+
+    self._database.save_company(company)
+    self._database.save_user(user)
+    for ev in user.email_changed_events:                 # 把事件转成总线上的消息
+        self._message_bus.send_email_changed_message(ev.user_id, ev.new_email)
+
+    return "OK"
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export interface EmailChangedEvent {
+  readonly userId: number
+  readonly newEmail: string
+}
+
+// User
+readonly emailChangedEvents: EmailChangedEvent[] = []
+
+changeEmail(newEmail: string, company: Company): void {
+  Precondition.requires(this.canChangeEmail() === null)
+
+  if (this.email === newEmail) return
+
+  const newType = company.isEmailCorporate(newEmail)
+    ? UserType.Employee : UserType.Customer
+
+  if (this.type !== newType) {
+    const delta = newType === UserType.Employee ? 1 : -1
+    company.changeNumberOfEmployees(delta)
+  }
+
+  this.email = newEmail
+  this.type = newType
+  this.emailChangedEvents.push({ userId: this.userId, newEmail })   // 记下「邮箱变了」
+}
+
+// UserController
+changeEmail(userId: number, newEmail: string): string {
+  const userData = this.database.getUserById(userId)
+  const user = UserFactory.create(userData)
+
+  const error = user.canChangeEmail()
+  if (error !== null) return error
+
+  const companyData = this.database.getCompany()
+  const company = CompanyFactory.create(companyData)
+
+  user.changeEmail(newEmail, company)
+
+  this.database.saveCompany(company)
+  this.database.saveUser(user)
+  for (const ev of user.emailChangedEvents) {                       // 把事件转成总线上的消息
+    this.messageBus.sendEmailChangedMessage(ev.userId, ev.newEmail)
+  }
+
+  return 'OK'
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 7.12 / 7.13 · 仓库 <code>code/Book/Chapter7/DomainEvents/DomainEvents.cs</code></p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="领域事件的流程：User 在邮箱真的变化时把事件加进自己的事件列表，操作结束后控制器遍历事件列表并发到消息总线。邮箱没变则列表为空，不发消息">
+  <rect class="bx-a" x="20" y="30" width="220" height="130" rx="12"/>
+  <text class="ttl on-a" x="130" y="56" text-anchor="middle">User（领域模型）</text>
+  <text class="sm" x="130" y="80" text-anchor="middle">邮箱真的变了？</text>
+  <rect class="bx" x="40" y="94" width="180" height="50" rx="8"/>
+  <text class="mono sm" x="130" y="114" text-anchor="middle">emailChangedEvents</text>
+  <text class="sm" x="130" y="132" text-anchor="middle">[ EmailChanged(1, "new@…") ]</text>
+
+  <path class="ln" d="M242 95 H296" marker-end="url(#ar)"/>
+  <text class="sm" x="269" y="22" text-anchor="middle">业务操作结束后 &darr;</text>
+
+  <rect class="bx-b" x="300" y="50" width="190" height="90" rx="12"/>
+  <text class="ttl on-b" x="395" y="78" text-anchor="middle">控制器</text>
+  <text class="sm" x="395" y="100" text-anchor="middle">遍历事件列表，</text>
+  <text class="sm" x="395" y="118" text-anchor="middle">一条事件发一条消息</text>
+
+  <path class="ln-b" style="stroke-width:2.2" d="M492 95 H546" marker-end="url(#ar-b)"/>
+  <rect class="bx" x="550" y="60" width="190" height="70" rx="12"/>
+  <text class="ttl" x="645" y="90" text-anchor="middle">消息总线</text>
+  <text class="sm" x="645" y="110" text-anchor="middle">外部系统看得见</text>
+
+  <text class="sm" x="380" y="186" text-anchor="middle">邮箱没变 &rarr; 列表是空的 &rarr; 循环一次都不执行 &rarr; 不发消息。「发不发」的决定回到了领域模型手里</text>
+</svg>
+<figcaption>图 7-9　领域事件把「发生了什么」留在内存里，等业务操作结束后再变成对外的调用</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; 为什么数据库还是无条件保存？</div>
+  <p>
+    因为<strong>数据库的变更</strong>和<strong>总线上的消息</strong>性质不同。假设只有 CRM 能访问这个数据库，那么与数据库的通信是实现细节 ——
+    只要最终状态正确，调多少次都无所谓。而与消息总线的通信是可观察行为，为了遵守和外部系统的契约，只有邮箱真的变了才能发消息。
+  </p>
+  <p>无条件保存有一点性能影响，但很小；而且大多数 ORM 在对象状态没变时根本不会访问数据库。</p>
+</div>
+
+<p>领域事件还简化了测试：不用通过 Mock 去测控制器，直接在单元测试里检查事件有没有被创建：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void changing_email_from_corporate_to_non_corporate() {
+    var company = new Company("mycorp.com", 1);
+    var sut = new User(1, "user@mycorp.com", UserType.EMPLOYEE, false);
+
+    sut.changeEmail("new@gmail.com", company);
+
+    assertThat(company.getNumberOfEmployees()).isEqualTo(0);
+    assertThat(sut.getEmail()).isEqualTo("new@gmail.com");
+    assertThat(sut.getType()).isEqualTo(UserType.CUSTOMER);
+    assertThat(sut.getEmailChangedEvents())                 // 同时断言集合的大小和内容
+        .containsExactly(new EmailChangedEvent(1, "new@gmail.com"));
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_changing_email_from_corporate_to_non_corporate():
+    company = Company("mycorp.com", 1)
+    sut = User(1, "user@mycorp.com", UserType.EMPLOYEE, is_email_confirmed=False)
+
+    sut.change_email("new@gmail.com", company)
+
+    assert company.number_of_employees == 0
+    assert sut.email == "new@gmail.com"
+    assert sut.type == UserType.CUSTOMER
+    assert sut.email_changed_events == [                    # 同时断言集合的大小和内容
+        EmailChangedEvent(1, "new@gmail.com")]
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('changing email from corporate to non corporate', () =&gt; {
+  const company = new Company('mycorp.com', 1)
+  const sut = new User(1, 'user@mycorp.com', UserType.Employee, false)
+
+  sut.changeEmail('new@gmail.com', company)
+
+  expect(company.numberOfEmployees).toBe(0)
+  expect(sut.email).toBe('new@gmail.com')
+  expect(sut.type).toBe(UserType.Customer)
+  expect(sut.emailChangedEvents).toEqual([                  // 同时断言集合的大小和内容
+    { userId: 1, newEmail: 'new@gmail.com' },
+  ])
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 7.14</p>
+
+<h2 id="conclusion">结语：像剥洋葱一样测试</h2>
+
+<p>
+  这一章反复出现的主题是：<strong>把「对外部系统施加副作用」这件事抽象起来</strong>，让副作用留在内存里直到业务操作的最后一刻，
+  这样就能用普通的单元测试去验证，而不必牵扯进程外依赖。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 测抽象，比测它所抽象的东西容易</div>
+  <p>
+    <strong>领域事件</strong>是「即将发到总线的消息」的抽象。<br>
+    <strong>领域对象的状态变化</strong>是「即将写进数据库的修改」的抽象。
+  </p>
+</div>
+
+<p>不过别指望把所有决策都收进领域模型，有些碎片化是避免不了的：</p>
+<ul>
+  <li><strong>校验邮箱唯一性</strong>：不把进程外依赖引入领域模型，就只能在控制器里做。</li>
+  <li><strong>进程外依赖调用失败时该怎么办</strong>：这个决定没法放在领域层，因为调用那些依赖的不是领域层。</li>
+</ul>
+<p>这类逻辑只能放在控制器里，然后用集成测试覆盖。同样，领域类也很少能做到一个协作者都没有 —— 有一两个、两三个都没关系，只要它们不涉及进程外依赖。</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="CRM 各组件之间的调用关系图。外部客户端调用控制器、控制器调用消息总线，对外部客户端来说是可观察行为；控制器调用 User 对控制器来说是可观察行为；User 调用 Company 对 User 来说是可观察行为">
+  <rect class="bx" x="20" y="40" width="140" height="48" rx="10"/><text class="lbl" x="90" y="69" text-anchor="middle">外部客户端</text>
+  <rect class="bx" x="20" y="190" width="140" height="48" rx="10"/><text class="lbl" x="90" y="219" text-anchor="middle">消息总线</text>
+  <rect class="bx-b" x="290" y="100" width="160" height="80" rx="12"/>
+  <text class="ttl on-b" x="370" y="134" text-anchor="middle">应用服务</text>
+  <text class="sm" x="370" y="154" text-anchor="middle">（控制器）</text>
+  <rect class="bx-a" x="590" y="40" width="150" height="48" rx="10"/><text class="lbl on-a" x="665" y="69" text-anchor="middle">User</text>
+  <rect class="bx-a" x="590" y="190" width="150" height="48" rx="10"/><text class="lbl on-a" x="665" y="219" text-anchor="middle">Company</text>
+
+  <path class="ln-g" style="stroke-width:2.4" d="M162 68 L288 118" marker-end="url(#ar-g)"/>
+  <path class="ln-g" style="stroke-width:2.4" d="M288 162 L164 210" marker-end="url(#ar-g)"/>
+  <text class="sm on-g" x="216" y="134" text-anchor="middle">对「外部客户端」</text>
+  <text class="sm on-g" x="216" y="150" text-anchor="middle">而言的可观察行为</text>
+
+  <path class="ln-b" style="stroke-width:2.4" d="M452 118 L586 70" marker-end="url(#ar-b)"/>
+  <text class="sm on-b" x="506" y="66" text-anchor="middle">对「控制器」而言</text>
+  <text class="sm on-b" x="506" y="82" text-anchor="middle">的可观察行为</text>
+
+  <path class="ln-a" style="stroke-width:2.4" d="M665 90 V186" marker-end="url(#ar-a)"/>
+  <text class="sm on-a" x="575" y="134" text-anchor="middle">对「User」而言</text>
+  <text class="sm on-a" x="575" y="150" text-anchor="middle">的可观察行为</text>
+
+  <text class="sm" x="380" y="268" text-anchor="middle">每一层的测试只验证从上一层看得见的那一条线；这一层再往下怎么调用，对它来说是实现细节</text>
+</svg>
+<figcaption>图 7-10　可观察行为像洋葱一样一层套一层。站在外面一层的视角去测里面一层</figcaption>
+</figure>
+
+<p>
+  测试控制器时，验证它的入口方法和它对消息总线的调用（绿线），<strong>不要</strong>验证它对 <code>User</code> 的调用。
+  往下一层，控制器成了客户端：测 <code>User.changeEmail()</code>（蓝线），但<strong>不要</strong>验证 <code>User</code> 调了 <code>Company</code> 的哪些方法。
+  再往下一层，从 <code>User</code> 的视角去测 <code>Company</code> 的两个方法（橙线）。
+  每剥一层就换一次视角：刚才还是实现细节的东西，现在成了可观察行为，由另一组测试覆盖。
+</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 不要用 Mock 验证领域类之间的交互</div>
+  <p>
+    只有从控制器到领域类的<strong>第一个</strong>调用和控制器的目标直接相关。领域类在同一个操作里对相邻领域类的后续调用，全都是实现细节。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li><strong>复杂度</strong>由决策点的数量决定，包括显式的（代码自己做的）和隐式的（所用的库做的）。<strong>领域重要性</strong>表示代码对项目问题领域的重要程度。</li>
+  <li>复杂的或有领域重要性的代码最值得单元测试（防止回归价值高）；协作者多的代码测试成本高。</li>
+  <li>四种代码：<strong>领域模型与算法</strong>（重点单元测试）、<strong>琐碎代码</strong>（不测）、<strong>控制器</strong>（少量集成测试）、<strong>过度复杂的代码</strong>（拆成前两者）。</li>
+  <li>代码越重要或越复杂，协作者应该越少。</li>
+  <li><strong>Humble Object 模式</strong>把业务逻辑从过度复杂的代码里抽到单独的类中，剩下的代码成为围绕业务逻辑的一层薄薄的、谦卑的包装 —— 控制器。六边形架构和函数式架构都实现了这个模式。</li>
+  <li>把业务逻辑和编排想成「深」与「宽」：代码可以深，可以宽，但不能既深又宽。</li>
+  <li>有领域意义的前置条件要测，没有的不用测。</li>
+  <li>分离业务逻辑和编排时，有三个属性最多只能同时保住两个：领域模型可测性、控制器简单性、性能。「把决策拆成更细的步骤」是利弊最均衡的选择。</li>
+  <li><strong>CanExecute/Execute</strong> 模式：为每个 <code>do()</code> 配一个 <code>canDo()</code>，并让后者成功成为前者的前置条件，从而消除控制器里的决策。</li>
+  <li><strong>领域事件</strong>追踪领域模型里的重要变化，再把这些变化转成对进程外依赖的调用，从而把追踪的职责从控制器里拿走。</li>
+  <li>测抽象比测它所抽象的东西容易。领域事件是对「即将发生的进程外调用」的抽象；领域对象的变化是对「即将发生的存储修改」的抽象。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>一个方法有 200 行，里面有 15 个 <code>if</code>，同时直接调用了数据库、邮件服务和支付网关。它在哪个象限？怎么办？</summary>
+  <p>过度复杂的代码（右上角）。用 Humble Object 模式拆开：把那 15 个 <code>if</code> 的决策逻辑抽成不依赖任何进程外东西的领域类 / 纯函数；原方法只剩「读数据 &rarr; 调用领域逻辑 &rarr; 写数据 / 发通知」的编排。</p>
+</details>
+<details class="quiz">
+  <summary>为什么说「给 <code>Database</code> 抽个接口再注入 <code>User</code>」解决不了根本问题？</summary>
+  <p>因为不管是直接引用还是通过接口，<code>User</code> 仍然有进程外协作者，在四象限里的位置没变。测试仍然需要复杂的 Mock 设置，而且 Mock 数据库还会让测试变脆弱。</p>
+</details>
+<details class="quiz">
+  <summary>领域事件为什么要用过去时命名（<code>EmailChanged</code> 而不是 <code>ChangeEmail</code>）？</summary>
+  <p>因为它描述的是已经发生的事实，而不是一条待执行的命令。它是不可变的值。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>从「起点」版本开始，亲手把 CRM 重构到最终版本（含 CanExecute/Execute 和领域事件）。每走一步，在纸上的四象限图里标出每个类的位置。</li>
+    <li>给最终版本的 <code>User</code> 补齐另外三个测试：从公司邮箱改成非公司邮箱、改邮箱但类型不变、改成相同的邮箱（此时事件列表应为空）。</li>
+    <li>给 <code>Company.changeNumberOfEmployees</code> 的前置条件写一个测试：员工数为 0 时再减 1 应该抛异常。</li>
+    <li>在你的项目里找一个「胖控制器」或「胖服务」，画出它的协作者，数一数它的分支。试着规划：哪些逻辑可以抽成没有协作者的领域类？</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="《Unit Testing: Principles, Practices, and Patterns》的中文图解教程：11 章，配图讲解，Java / Python / TypeScript 三语言代码示例。">
+<title>单元测试图解教程 · 原则、实践与模式</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="0">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<div class="hero">
+  <span class="chapter-eyebrow">面向初学者的 11 章图解教程</span>
+  <h1>单元测试：原则、实践与模式</h1>
+  <p class="sub">
+    这套教程整理自 Vladimir Khorikov 的《Unit Testing: Principles, Practices, and Patterns》（Manning, 2020）。
+    原书回答的不是「怎么写测试」，而是一个更难的问题：<strong>什么样的测试才值得写</strong>。
+    教程保留了原书的全部章节和推理过程，把例子从 C# 改写成了三种语言，并为每个关键概念配了图。
+  </p>
+  <p style="margin-top:14px">
+    <span class="pill">Java · JUnit 5 · AssertJ · Mockito</span>
+    <span class="pill">Python · pytest · unittest.mock</span>
+    <span class="pill">TypeScript · Vitest</span>
+    <span class="pill">100 张图</span>
+  </p>
+</div>
+
+<h2 id="why">这套教程解决什么问题</h2>
+
+<p>
+  你可能已经会写单元测试了，甚至写过很多。但你大概也遇到过这些情况：
+</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128308;</span><h4>改个方法名，红了一片</h4><p>功能明明没坏，测试却挂了。修测试花的时间比写功能还多。</p></div>
+  <div class="card"><span class="ic">&#128994;</span><h4>测试全绿，线上照样出 Bug</h4><p>覆盖率 90%，可真正的问题一个都没拦住。</p></div>
+  <div class="card"><span class="ic">&#129521;</span><h4>测试比被测代码还长</h4><p>准备阶段一屏 Mock 设置，就为了验证控制器里的三行代码。</p></div>
+  <div class="card"><span class="ic">&#129300;</span><h4>说不清一个测试好不好</h4><p>凭感觉觉得不对劲，但评审时讲不出道理。</p></div>
+</div>
+
+<p>
+  这本书给出了一套<strong>可以推导、可以讲清楚的标准</strong>。读完之后，对任何一个测试，你都能说出它值不值得留、问题出在哪、该怎么改。
+</p>
+
+<h2 id="core">一张图看懂全书的核心思想</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 420" role="img" aria-label="全书核心思想：把代码分成领域模型和控制器两部分。领域模型没有进程外依赖，用大量快速的单元测试覆盖，不使用 Mock。控制器负责编排，用少量集成测试覆盖，其中自己的数据库用真的，消息总线等对外可见的依赖用 Mock">
+  <text class="ttl" x="380" y="24" text-anchor="middle">把代码分成两种，用两种测试分别对付</text>
+
+  <rect class="bx-a" x="20" y="44" width="350" height="216" rx="14"/>
+  <text class="ttl on-a" x="36" y="70">领域模型 · 做决定</text>
+  <text class="sm" x="36" y="90">复杂、重要的业务逻辑；不碰数据库、网络、文件</text>
+  <rect class="bx" x="40" y="106" width="96" height="40" rx="8"/><text class="lbl" x="88" y="131" text-anchor="middle">User</text>
+  <rect class="bx" x="148" y="106" width="96" height="40" rx="8"/><text class="lbl" x="196" y="131" text-anchor="middle">Company</text>
+  <rect class="bx" x="256" y="106" width="96" height="40" rx="8"/><text class="lbl" x="304" y="131" text-anchor="middle">计算规则</text>
+  <rect class="bx-g" x="40" y="162" width="312" height="82" rx="10"/>
+  <text class="ttl on-g" x="56" y="186">&#9654; 单元测试（大量）</text>
+  <text class="sm" x="56" y="206">给输入、看输出或状态；毫秒级；不用 Mock</text>
+  <text class="sm" x="56" y="224">把各种边界情况都放在这里</text>
+
+  <rect class="bx-b" x="390" y="44" width="350" height="216" rx="14"/>
+  <text class="ttl on-b" x="406" y="70">控制器 · 做协调</text>
+  <text class="sm" x="406" y="90">读数据 &rarr; 调用领域模型 &rarr; 写数据、发通知；几乎没有分支</text>
+  <rect class="bx" x="410" y="106" width="312" height="40" rx="8"/><text class="lbl" x="566" y="131" text-anchor="middle">UserController.changeEmail()</text>
+  <rect class="bx-g" x="410" y="162" width="312" height="82" rx="10"/>
+  <text class="ttl on-g" x="426" y="186">&#9654; 集成测试（少量）</text>
+  <text class="sm" x="426" y="206">每个业务场景走一条最长的成功路径</text>
+  <text class="sm" x="426" y="224">确认整条链路是通的</text>
+
+  <path class="ln" d="M470 262 V296" marker-end="url(#ar)"/>
+  <path class="ln" d="M660 262 V296" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="390" y="300" width="166" height="84" rx="10"/>
+  <text class="ttl on-g" x="473" y="324" text-anchor="middle">自己的数据库</text>
+  <text class="sm" x="473" y="344" text-anchor="middle">只有你的应用能访问</text>
+  <text class="lbl on-g" x="473" y="368" text-anchor="middle">&rarr; 用真的</text>
+  <rect class="bx-p" x="574" y="300" width="166" height="84" rx="10"/>
+  <text class="ttl on-p" x="657" y="324" text-anchor="middle">消息总线、邮件……</text>
+  <text class="sm" x="657" y="344" text-anchor="middle">别的系统也看得见</text>
+  <text class="lbl on-p" x="657" y="368" text-anchor="middle">&rarr; 用 Mock</text>
+
+  <rect class="bx-d" x="20" y="286" width="350" height="112" rx="12"/>
+  <text class="ttl" x="36" y="310">贯穿始终的一条铁律</text>
+  <text class="lbl" x="36" y="336">测试只验证<tspan class="on-a" font-weight="700">可观察行为</tspan>（做了什么），</text>
+  <text class="lbl" x="36" y="358">不验证<tspan class="on-r" font-weight="700">实现细节</tspan>（怎么做的）。</text>
+  <text class="sm" x="36" y="384">否则一重构就误报，测试很快没人信</text>
+</svg>
+<figcaption>图 0-1　全书的落脚点。前七章讲「为什么是这样」，后四章讲「具体怎么做」</figcaption>
+</figure>
+
+<h2 id="roadmap">学习路线</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 310" role="img" aria-label="四个部分十一章的学习路线">
+  <rect class="bx-b" x="14" y="14" width="176" height="282" rx="12"/>
+  <text class="ttl on-b" x="102" y="38" text-anchor="middle">第一部分</text>
+  <text class="sm on-b" x="102" y="56" text-anchor="middle">全局视角</text>
+  <rect class="bx" x="26" y="70" width="152" height="60" rx="8"/><text class="lbl" x="38" y="92">1 · 测试的目标</text><text class="sm" x="38" y="112">可持续增长；覆盖率的坑</text>
+  <rect class="bx" x="26" y="140" width="152" height="60" rx="8"/><text class="lbl" x="38" y="162">2 · 什么是单元测试</text><text class="sm" x="38" y="182">经典学派 vs 伦敦学派</text>
+  <rect class="bx" x="26" y="210" width="152" height="60" rx="8"/><text class="lbl" x="38" y="232">3 · 测试的结构</text><text class="sm" x="38" y="252">AAA、命名、参数化</text>
+
+  <rect class="bx-a" x="200" y="14" width="176" height="282" rx="12"/>
+  <text class="ttl on-a" x="288" y="38" text-anchor="middle">第二部分</text>
+  <text class="sm on-a" x="288" y="56" text-anchor="middle">让测试为你工作</text>
+  <rect class="bx" x="212" y="70" width="152" height="48" rx="8"/><text class="lbl" x="224" y="90">4 · 四大支柱 &#9733;</text><text class="sm" x="224" y="108">全书的地基</text>
+  <rect class="bx" x="212" y="126" width="152" height="48" rx="8"/><text class="lbl" x="224" y="146">5 · Mock 与脆弱性</text><text class="sm" x="224" y="164">可观察行为、六边形架构</text>
+  <rect class="bx" x="212" y="182" width="152" height="48" rx="8"/><text class="lbl" x="224" y="202">6 · 三种测试风格</text><text class="sm" x="224" y="220">函数式核心 + 可变外壳</text>
+  <rect class="bx" x="212" y="238" width="152" height="48" rx="8"/><text class="lbl" x="224" y="258">7 · 重构出好测试</text><text class="sm" x="224" y="276">四象限、领域事件</text>
+
+  <rect class="bx-g" x="386" y="14" width="176" height="282" rx="12"/>
+  <text class="ttl on-g" x="474" y="38" text-anchor="middle">第三部分</text>
+  <text class="sm on-g" x="474" y="56" text-anchor="middle">集成测试</text>
+  <rect class="bx" x="398" y="70" width="152" height="60" rx="8"/><text class="lbl" x="410" y="92">8 · 为什么要集成测试</text><text class="sm" x="410" y="112">受管 / 不受管依赖</text>
+  <rect class="bx" x="398" y="140" width="152" height="60" rx="8"/><text class="lbl" x="410" y="162">9 · Mock 最佳实践</text><text class="sm" x="410" y="182">在边缘验证、Spy</text>
+  <rect class="bx" x="398" y="210" width="152" height="60" rx="8"/><text class="lbl" x="410" y="232">10 · 测试数据库</text><text class="sm" x="410" y="252">迁移、事务、数据清理</text>
+
+  <rect class="bx-r" x="572" y="14" width="176" height="282" rx="12"/>
+  <text class="ttl on-r" x="660" y="38" text-anchor="middle">第四部分</text>
+  <text class="sm on-r" x="660" y="56" text-anchor="middle">反模式</text>
+  <rect class="bx" x="584" y="70" width="152" height="60" rx="8"/><text class="lbl" x="596" y="92">11 · 六个反模式</text><text class="sm" x="596" y="112">私有方法、时间……</text>
+  <text class="sm" x="660" y="170" text-anchor="middle">用前面学到的标尺，</text>
+  <text class="sm" x="660" y="188" text-anchor="middle">检验那些「看着合理」</text>
+  <text class="sm" x="660" y="206" text-anchor="middle">的常见做法</text>
+</svg>
+<figcaption>图 0-2　四个部分、十一章。第 4 章是枢纽，后面每一章都在用它</figcaption>
+</figure>
+
+<h2 id="how">怎么用这套教程</h2>
+
+<ul>
+  <li><strong>按顺序读。</strong>这本书是一步步推导出来的，后面的结论依赖前面的定义。尤其不要跳过第 4 章和第 5 章。</li>
+  <li><strong>代码块可以切换语言。</strong>带标签的代码块有 Java / Python / TypeScript 三个版本，点一下标签，全站都会切换并记住你的选择。三个版本表达的是同一件事，只是写法各自遵循该语言的习惯。</li>
+  <li><strong>每章末尾有自测和练习。</strong>自测题点开就能看答案；练习建议真的动手 —— 看懂和写出来之间的差距，比想象的大。</li>
+  <li><strong>想对照原书代码？</strong>每段示例下面都标了对应的原书 Listing 编号和仓库里 <code>code/Book/ChapterN/</code> 下的 C# 文件。</li>
+</ul>
+
+<p>试试切换语言（下面三个版本做的是同一件事）：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void delivery_with_a_past_date_is_invalid() {
+    var sut = new DeliveryService();
+    var delivery = new Delivery(LocalDateTime.now().minusDays(1));
+
+    boolean isValid = sut.isDeliveryValid(delivery);
+
+    assertThat(isValid).isFalse();
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_delivery_with_a_past_date_is_invalid():
+    sut = DeliveryService()
+    delivery = Delivery(date=datetime.now() - timedelta(days=1))
+
+    is_valid = sut.is_delivery_valid(delivery)
+
+    assert is_valid is False
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('delivery with a past date is invalid', () =&gt; {
+  const sut = new DeliveryService()
+  const delivery = new Delivery(addDays(new Date(), -1))
+
+  const isValid = sut.isDeliveryValid(delivery)
+
+  expect(isValid).toBe(false)
+})
+</pre></div>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 需要什么前置知识</div>
+  <p>
+    会用三种语言中的任意一种写类和函数，知道「测试框架」大概是什么就够了。
+    Mock、六边形架构、领域事件这些概念都会在第一次出现时从头解释。
+  </p>
+</div>
+
+<h2 id="terms">先混个眼熟：十个高频术语</h2>
+
+<div class="tw">
+<table>
+  <tr><th>术语</th><th>一句话解释</th><th>详见</th></tr>
+  <tr><td><strong>SUT</strong>（被测系统）</td><td>这个测试要验证的那个类 / 对象</td><td><a href="ch02.html">第 2 章</a></td></tr>
+  <tr><td><strong>回归</strong></td><td>原本好用的功能，改代码之后不好用了</td><td><a href="ch01.html">第 1 章</a></td></tr>
+  <tr><td><strong>误报</strong>（假阳性）</td><td>功能没坏，测试却红了</td><td><a href="ch04.html">第 4 章</a></td></tr>
+  <tr><td><strong>可观察行为</strong></td><td>帮助调用方达成目标的操作或状态；与之相对的是实现细节</td><td><a href="ch05.html">第 5 章</a></td></tr>
+  <tr><td><strong>Mock / Stub</strong></td><td>Mock 检查「往外发」的调用；Stub 提供「往里拿」的数据</td><td><a href="ch05.html">第 5 章</a></td></tr>
+  <tr><td><strong>共享依赖</strong></td><td>能让测试互相干扰的依赖，如数据库、文件、静态可变字段</td><td><a href="ch02.html">第 2 章</a></td></tr>
+  <tr><td><strong>受管 / 不受管依赖</strong></td><td>只有你的应用能访问的（如自己的库）/ 别的系统也看得见的（如消息总线）</td><td><a href="ch08.html">第 8 章</a></td></tr>
+  <tr><td><strong>领域模型</strong></td><td>代码里承载业务规则的那部分</td><td><a href="ch07.html">第 7 章</a></td></tr>
+  <tr><td><strong>控制器</strong>（应用服务）</td><td>在领域模型和外部世界之间做协调的代码</td><td><a href="ch07.html">第 7 章</a></td></tr>
+  <tr><td><strong>领域事件</strong></td><td>领域模型里记下的「发生了什么」，事后再转成对外的调用</td><td><a href="ch07.html">第 7 章</a></td></tr>
+</table>
+</div>
+
+<h2 id="toc">全部章节</h2>
+<div id="toc-grid"></div>
+
+<div class="box tip" style="margin-top:32px">
+  <div class="t">&#128161; 如果只记住一件事</div>
+  <p>
+    写完一个测试，问自己：<strong>「如果我重构这段代码但不改变它的行为，这个测试会红吗？」</strong>
+    会的话，它测的是实现而不是行为。这套教程剩下的全部内容，都是在解释怎样让答案变成「不会」，同时还能抓住真正的 Bug。
+  </p>
+</div>
+
+<p style="margin-top:28px;font-size:13px;color:var(--fg-faint)">
+  本教程是学习笔记性质的整理与改写，概念和结构归原作者 Vladimir Khorikov 所有。建议配合原书阅读。
+</p>
+
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

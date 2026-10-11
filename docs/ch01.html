@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 1 章 · 单元测试的目标 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="1">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 1 章</span>
+<h1>单元测试的目标</h1>
+<p class="lede">
+  「要不要写单元测试」早就不是问题了。真正的问题是：为什么有的项目测试写了一大堆，开发却还是越来越慢、Bug 越来越多？
+  这一章先把目标讲清楚 —— 目标错了，后面的技巧都是白费力气。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>说出单元测试的真正目标：让项目<strong>可持续地</strong>增长</li>
+    <li>理解「测试也是代码，代码是负债」这句话</li>
+    <li>会算代码覆盖率和分支覆盖率，并知道它们为什么不能衡量测试质量</li>
+    <li>知道一套成功的测试长什么样</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="state">现状：测试很多，日子却不好过</h2>
+
+<p>
+  过去二十年，单元测试从「加分项」变成了「必选项」。很多企业项目里，生产代码和测试代码的比例在
+  1:1 到 1:3 之间（每写一行业务代码，配一到三行测试代码），极端的能到 1:10。
+</p>
+
+<p>
+  但你很可能见过这种项目：测试数量惊人，可是加一个新功能要改半个月，已经上线的功能隔三差五出问题，
+  每次改代码都要顺手修一堆「莫名其妙变红」的测试。测试不但没帮上忙，反而成了负担。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 讨论的重心变了</div>
+  <p>
+    问题已经从「<em>我们该不该写单元测试？</em>」变成了「<em>什么才算<strong>好的</strong>单元测试？</em>」。
+    好测试和坏测试的差别不是个人口味，它直接决定项目的成败。这套教程（以及原书）回答的就是后一个问题。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 什么是「企业应用」</div>
+  <p>
+    原书的例子大多来自企业应用 —— 用来自动化或辅助一个组织内部流程的软件。它的典型特征是：
+    <strong>业务逻辑复杂、项目寿命长</strong>、数据量中等、性能要求不高。
+    不过书里的核心思想对任何软件项目都适用。
+  </p>
+</div>
+
+<h2 id="goal">单元测试的目标</h2>
+
+<p>
+  常听到一种说法：「写单元测试能让代码设计更好」。这话没错 —— 为了让代码能被测试，你不得不把它拆得更干净。
+  但这只是一个<strong>令人愉快的副作用</strong>，不是目标。
+</p>
+
+<div class="box deep">
+  <div class="t">&#128300; 「能不能测」是一块单向的试金石</div>
+  <p>
+    <strong>很难测</strong> &rarr; 基本可以断定代码设计有问题（通常是耦合太紧，各部分拆不开）。这是一个靠谱的<em>负面指标</em>。<br>
+    <strong>很好测</strong> &rarr; 并不能说明代码质量好。解耦做得很漂亮的项目照样可能是一场灾难。这是一个不靠谱的<em>正面指标</em>。
+  </p>
+  <p>记住「好的负面指标、差的正面指标」这个句式，本章后面讲覆盖率时还会再遇到它。</p>
+</div>
+
+<p>那真正的目标是什么？一句话：</p>
+
+<div class="term">
+  <b class="w">单元测试的目标</b>
+  <p>让软件项目能够<strong>可持续地增长</strong>（sustainable growth）。关键词是「可持续」——
+     从零开始把项目做大很容易，难的是一直保持住这个速度。</p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="三条曲线对比：没有测试、有坏测试、有好测试的项目，随着进度推进所需工时的变化">
+  <path class="ln" d="M70 20 V250 H720"/>
+  <text class="sm" x="64" y="24" text-anchor="end">耗费</text>
+  <text class="sm" x="64" y="38" text-anchor="end">的工时</text>
+  <text class="sm" x="720" y="268" text-anchor="end">项目进度 &rarr;</text>
+
+  <path class="ln-r" style="stroke-width:2.4" d="M70 250 C250 240 400 200 470 30"/>
+  <path class="ln-a" style="stroke-width:2.4" d="M70 250 C300 225 520 170 600 30"/>
+  <path class="ln-g" style="stroke-width:2.4" d="M70 250 L700 110"/>
+
+  <text class="ttl on-r" x="452" y="28" text-anchor="end">没有测试</text>
+  <text class="ttl on-a" x="612" y="36">有测试，但质量差</text>
+  <text class="ttl on-g" x="700" y="98" text-anchor="end">有高质量的测试</text>
+
+  <rect class="bx-d" x="84" y="140" width="150" height="44" rx="8"/>
+  <text class="sm" x="159" y="158" text-anchor="middle">起步阶段：不写测试</text>
+  <text class="sm" x="159" y="174" text-anchor="middle">确实跑得更快</text>
+
+  <path class="ln-d" d="M430 250 V120"/>
+  <text class="sm" x="436" y="244">停滞期：加班也推不动了</text>
+  <text class="sm" x="70" y="290">读图方法：曲线越陡，说明「想往前走一步」要花的时间越多。</text>
+</svg>
+<figcaption>图 1-1　三种项目的增长曲线。坏测试只是把停滞<strong>推迟</strong>了，并没有避免它</figcaption>
+</figure>
+
+<h3>为什么没有测试的项目会越来越慢</h3>
+
+<p>
+  这个现象有个名字，叫<strong>软件熵</strong>（software entropy）。熵是「系统混乱程度」的度量。
+  每改一次代码，代码库里的混乱就多一点；如果没有人持续地清理和重构，系统就会越来越复杂、越来越乱。
+  到最后，修一个 Bug 会带出三个新 Bug，改一处会坏好几处 —— 像多米诺骨牌一样。
+</p>
+
+<p>
+  测试的作用，就是在你下面张开一张<strong>安全网</strong>：无论是加新功能，还是为了适应新需求而重构，
+  它都能告诉你「原来能用的东西现在还能用」。
+</p>
+
+<div class="term">
+  <b class="w">回归（regression）</b>
+  <p>一个原本正常的功能，在某次变更（通常是改代码）之后不再正常工作。在本教程里，「回归」和「Bug」可以当同义词用。</p>
+</div>
+
+<p>
+  安全网不是免费的：写测试需要前期投入，有时投入还不小。但从长期看它是划算的，
+  因为没有测试持续把关的开发方式<strong>无法扩展</strong>。
+</p>
+
+<h2 id="good-bad">好测试与坏测试</h2>
+
+<p>
+  再看一眼图 1-1 里中间那条橙色曲线。坏测试在开始阶段确实有点用，下滑没那么快；
+  但大趋势没有变，停滞照样会来。<strong>光是「往项目里堆测试」达不到目标。</strong>
+</p>
+
+<p>每一个测试都有两面：它带来的<strong>价值</strong>，和它的<strong>维护成本</strong>。成本来自这些地方：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="天平：一边是测试带来的价值，一边是四项维护成本">
+  <path class="ln" d="M380 70 V200 M330 200 H430"/>
+  <path class="ln" style="stroke-width:2.2" d="M130 84 L630 62"/>
+  <circle cx="380" cy="73" r="5" fill="var(--fg-faint)"/>
+
+  <rect class="bx-g" x="30" y="96" width="210" height="96" rx="10"/>
+  <text class="ttl on-g" x="135" y="120" text-anchor="middle">价值</text>
+  <text class="sm" x="135" y="142" text-anchor="middle">抓住回归（Bug）</text>
+  <text class="sm" x="135" y="160" text-anchor="middle">让你敢于重构</text>
+  <text class="sm" x="135" y="178" text-anchor="middle">充当可执行的文档</text>
+  <path class="ln" d="M135 84 V96"/>
+
+  <rect class="bx-r" x="500" y="74" width="240" height="124" rx="10"/>
+  <text class="ttl on-r" x="620" y="98" text-anchor="middle">维护成本</text>
+  <text class="sm" x="620" y="120" text-anchor="middle">① 重构代码时要跟着改测试</text>
+  <text class="sm" x="620" y="138" text-anchor="middle">② 每次改动都要跑一遍</text>
+  <text class="sm" x="620" y="156" text-anchor="middle">③ 处理测试发出的假警报</text>
+  <text class="sm" x="620" y="174" text-anchor="middle">④ 为了弄懂代码而读测试的时间</text>
+  <path class="ln" d="M620 62 V74"/>
+
+  <text class="lbl" x="380" y="228" text-anchor="middle">净价值 = 价值 − 成本。净价值接近 0 甚至为负的测试，写出来非常容易。</text>
+</svg>
+<figcaption>图 1-2　每个测试都要放到天平上称一称。只有净价值明显为正的测试才值得留在测试集里</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 代码是负债，不是资产 —— 测试代码也一样</div>
+  <p>
+    很多人下意识觉得：生产代码有成本，测试代码是「白送的」，所以测试越多越好。<strong>这是错的。</strong>
+  </p>
+  <p>
+    你引入的代码越多，潜在 Bug 的面积就越大，维护成本就越高。测试也是代码：它也会有 Bug，也需要维护。
+    应该把测试看成代码库里「专门负责保证正确性」的那一部分 —— 能用更少的代码解决问题，永远更好。
+  </p>
+</div>
+
+<h2 id="coverage">覆盖率：最常见的误区</h2>
+
+<p>
+  既然测试有好有坏，那怎么衡量一套测试的质量？最常见的做法是看<strong>覆盖率</strong>。
+</p>
+
+<div class="term">
+  <b class="w">覆盖率指标（coverage metric）</b>
+  <p>测试集执行到了多少源代码，范围从 0% 到 100%。</p>
+</div>
+
+<p>
+  普遍的看法是「覆盖率越高越好」。可惜没这么简单。先说结论，再一步步看为什么：
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 覆盖率是好的负面指标、差的正面指标</div>
+  <p>
+    覆盖率<strong>很低</strong>（比如 10%）&rarr; 可以肯定测试不够。<br>
+    覆盖率<strong>很高</strong>（哪怕 100%）&rarr; 什么都说明不了，测试集照样可能很烂。
+  </p>
+</div>
+
+<h3>代码覆盖率（行覆盖率）</h3>
+
+<p>最常用的一种，也叫测试覆盖率。公式很简单：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 96" role="img" aria-label="代码覆盖率等于被执行的代码行数除以总行数">
+  <text class="ttl" x="250" y="54" text-anchor="end">代码覆盖率  =</text>
+  <rect class="bx-g" x="270" y="12" width="250" height="32" rx="7"/>
+  <text class="lbl on-g" x="395" y="33" text-anchor="middle">至少被一个测试执行过的代码行数</text>
+  <path class="ln" style="stroke-width:2" d="M266 50 H524"/>
+  <rect class="bx" x="270" y="56" width="250" height="32" rx="7"/>
+  <text class="lbl" x="395" y="77" text-anchor="middle">生产代码的总行数</text>
+</svg>
+<figcaption>图 1-3　代码覆盖率的计算方式</figcaption>
+</figure>
+
+<p>
+  来看一个例子。<code>isStringLong</code> 判断一个字符串是不是「长」的（长度超过 5 就算长），
+  测试只用 <code>"abc"</code> 试了一次：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// 生产代码
+public static boolean isStringLong(String input) {
+    if (input.length() &gt; 5)
+        return true;      // ← 测试没走到这一行
+    return false;
+}
+
+// 测试
+@Test
+void abc_is_not_long() {
+    boolean result = isStringLong("abc");
+
+    assertThat(result).isFalse();
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# 生产代码
+def is_string_long(text: str) -&gt; bool:
+    if len(text) &gt; 5:
+        return True       # ← 测试没走到这一行
+    return False
+
+
+# 测试
+def test_abc_is_not_long():
+    result = is_string_long("abc")
+
+    assert result is False
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// 生产代码
+export function isStringLong(input: string): boolean {
+  if (input.length &gt; 5)
+    return true        // ← 测试没走到这一行
+  return false
+}
+
+// 测试
+test('abc is not long', () =&gt; {
+  const result = isStringLong('abc')
+
+  expect(result).toBe(false)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 1.1（原书为 C#，本教程全部改写为 Java / Python / TypeScript 三个版本，点标签可切换，选择会被记住）</p>
+
+<p>
+  按原书的数法（花括号也算一行），方法共 5 行，测试走过了 4 行，覆盖率是 4/5 = <strong>80%</strong>。
+</p>
+
+<p>现在我「重构」一下，把多余的 <code>if</code> 去掉，测试一个字都不改：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 232" role="img" aria-label="同一个测试，方法写成五行时覆盖率是百分之八十，压成三行后变成百分之百">
+  <text class="ttl" x="30" y="24">重构前：5 行，执行 4 行</text>
+  <rect class="bx" x="30" y="34" width="330" height="130" rx="10"/>
+  <rect x="38" y="44"  width="6" height="18" rx="2" fill="var(--green)"/>
+  <rect x="38" y="66"  width="6" height="18" rx="2" fill="var(--green)"/>
+  <rect x="38" y="88"  width="6" height="18" rx="2" fill="var(--red)"/>
+  <rect x="38" y="110" width="6" height="18" rx="2" fill="var(--green)"/>
+  <rect x="38" y="132" width="6" height="18" rx="2" fill="var(--green)"/>
+  <text class="mono" x="54" y="58">boolean isStringLong(String s) {</text>
+  <text class="mono" x="54" y="80">    if (s.length() &gt; 5)</text>
+  <text class="mono on-r" x="54" y="102">        return true;    &#10007; 没执行</text>
+  <text class="mono" x="54" y="124">    return false;</text>
+  <text class="mono" x="54" y="146">}</text>
+  <text class="ttl on-a" x="195" y="192" text-anchor="middle">覆盖率 4 / 5 = 80%</text>
+
+  <path class="ln-a" d="M368 99 H398" marker-end="url(#ar-a)"/>
+
+  <text class="ttl" x="406" y="24">重构后：3 行，执行 3 行</text>
+  <rect class="bx" x="406" y="34" width="330" height="130" rx="10"/>
+  <rect x="414" y="44" width="6" height="18" rx="2" fill="var(--green)"/>
+  <rect x="414" y="66" width="6" height="18" rx="2" fill="var(--green)"/>
+  <rect x="414" y="88" width="6" height="18" rx="2" fill="var(--green)"/>
+  <text class="mono" x="430" y="58">boolean isStringLong(String s) {</text>
+  <text class="mono" x="430" y="80">    return s.length() &gt; 5;</text>
+  <text class="mono" x="430" y="102">}</text>
+  <text class="sm" x="430" y="140">测试还是只试了 "abc" 这一种情况</text>
+  <text class="ttl on-a" x="571" y="192" text-anchor="middle">覆盖率 3 / 3 = 100%</text>
+
+  <text class="lbl" x="380" y="222" text-anchor="middle">绿条 = 被测试执行过的行　　红条 = 没被执行的行</text>
+</svg>
+<figcaption>图 1-4　测试没变、验证的情况没变，覆盖率却从 80% 涨到了 100%</figcaption>
+</figure>
+
+<p>
+  我让测试集变好了吗？当然没有，我只是把代码挪了挪位置。这说明<strong>行覆盖率很容易被「刷」</strong>：
+  代码写得越紧凑，数字越好看，因为它只数行数。
+</p>
+
+<h3>分支覆盖率</h3>
+
+<p>
+  分支覆盖率更精确一些。它不数行，而是数<strong>控制结构</strong>（<code>if</code>、<code>switch</code> 等）产生的分支，
+  看有多少条分支至少被一个测试走过：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="isStringLong 有两条代码路径，测试只走了长度小于等于五的那一条，分支覆盖率是百分之五十">
+  <text class="ttl" x="150" y="40" text-anchor="end">分支覆盖率  =</text>
+  <rect class="bx-g" x="166" y="14" width="150" height="26" rx="6"/>
+  <text class="lbl on-g" x="241" y="32" text-anchor="middle">被走过的分支数</text>
+  <path class="ln" style="stroke-width:2" d="M162 46 H320"/>
+  <rect class="bx" x="166" y="52" width="150" height="26" rx="6"/>
+  <text class="lbl" x="241" y="70" text-anchor="middle">分支总数</text>
+
+  <rect class="bx" x="505" y="14" width="110" height="34" rx="17"/>
+  <text class="lbl" x="560" y="36" text-anchor="middle">开始</text>
+
+  <path class="ln-d" d="M530 50 C480 80 450 100 450 124" marker-end="url(#ar)"/>
+  <path class="ln-g" style="stroke-width:2.4" d="M590 50 C640 80 670 100 670 124" marker-end="url(#ar-g)"/>
+
+  <rect class="bx-d" x="380" y="128" width="140" height="44" rx="8"/>
+  <text class="mono" x="450" y="147" text-anchor="middle">length &gt; 5</text>
+  <text class="sm" x="450" y="164" text-anchor="middle">没有测试走这条</text>
+
+  <rect class="bx-g" x="600" y="128" width="140" height="44" rx="8"/>
+  <text class="mono on-g" x="670" y="147" text-anchor="middle">length &lt;= 5</text>
+  <text class="sm" x="670" y="164" text-anchor="middle">"abc" 走的是这条</text>
+
+  <path class="ln-d" d="M450 174 C450 204 490 220 528 236" marker-end="url(#ar)"/>
+  <path class="ln-g" style="stroke-width:2.4" d="M670 174 C670 204 630 220 592 236" marker-end="url(#ar-g)"/>
+
+  <rect class="bx" x="505" y="238" width="110" height="34" rx="17"/>
+  <text class="lbl" x="560" y="260" text-anchor="middle">结束</text>
+
+  <rect class="bx-a" x="30" y="128" width="290" height="100" rx="10"/>
+  <text class="ttl on-a" x="46" y="152">2 条路径，走了 1 条</text>
+  <text class="lbl" x="46" y="176">分支覆盖率 = 1 / 2 = 50%</text>
+  <text class="sm" x="46" y="198">不管方法写成 5 行还是 3 行，</text>
+  <text class="sm" x="46" y="214">这个数字都不变 —— 比行覆盖率诚实</text>
+</svg>
+<figcaption>图 1-5　把方法画成「路径图」：每条从开始到结束的路线就是一个分支</figcaption>
+</figure>
+
+<h3>问题一：执行过 &ne; 验证过</h3>
+
+<p>
+  分支覆盖率比行覆盖率好，但它仍然不能衡量测试质量。第一个原因：
+  覆盖率只知道代码<strong>被执行了</strong>，不知道结果<strong>有没有被检查</strong>。
+</p>
+
+<p>看这个版本的 <code>isStringLong</code>，它多做了一件事 —— 把最近一次的结果记到一个公开字段里：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class StringChecker {
+    public static boolean wasLastStringLong;
+
+    public static boolean isStringLong(String input) {
+        boolean result = input.length() &gt; 5;
+        wasLastStringLong = result;   // 结果一：隐式的（改了状态）
+        return result;                // 结果二：显式的（返回值）
+    }
+}
+
+@Test
+void abc_is_not_long() {
+    boolean result = StringChecker.isStringLong("abc");
+
+    assertThat(result).isFalse();     // 只验证了结果二
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+was_last_string_long = False
+
+
+def is_string_long(text: str) -&gt; bool:
+    global was_last_string_long
+    result = len(text) &gt; 5
+    was_last_string_long = result   # 结果一：隐式的（改了状态）
+    return result                   # 结果二：显式的（返回值）
+
+
+def test_abc_is_not_long():
+    result = is_string_long("abc")
+
+    assert result is False          # 只验证了结果二
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export let wasLastStringLong = false
+
+export function isStringLong(input: string): boolean {
+  const result = input.length &gt; 5
+  wasLastStringLong = result   // 结果一：隐式的（改了状态）
+  return result                // 结果二：显式的（返回值）
+}
+
+test('abc is not long', () =&gt; {
+  const result = isStringLong('abc')
+
+  expect(result).toBe(false)   // 只验证了结果二
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 1.2</p>
+
+<p>
+  这个方法有两个结果，测试只检查了其中一个。可覆盖率数字和之前一模一样：行覆盖 100%，分支覆盖 50%。
+  把这个问题推到极端，就是<strong>没有断言的测试</strong>：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void test() {
+    boolean result1 = isStringLong("abc");      // 返回 false
+    boolean result2 = isStringLong("abcdef");   // 返回 true
+    // 没有任何断言 —— 这个测试永远是绿的
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_something():
+    result1 = is_string_long("abc")      # 返回 False
+    result2 = is_string_long("abcdef")   # 返回 True
+    # 没有任何断言 —— 这个测试永远是绿的
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('something', () =&gt; {
+  const result1 = isStringLong('abc')      // 返回 false
+  const result2 = isStringLong('abcdef')   // 返回 true
+  // 没有任何断言 —— 这个测试永远是绿的
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 1.3</p>
+
+<p>行覆盖率 100%，分支覆盖率 100%，同时<strong>毫无用处</strong>，因为它什么都没验证。</p>
+
+<div class="box deep">
+  <div class="t">&#128214; 原书作者讲的一个真实故事</div>
+  <p>
+    多年前，作者所在的公司有几位开发者参加技术大会回来，决定推广单元测试。管理层很支持，于是下了一道全公司的硬性规定：
+    <strong>所有团队必须把代码覆盖率做到 100%</strong>，之后任何让覆盖率下降的提交都会被构建系统拒绝。
+  </p>
+  <p>
+    结果呢？被这条规定压得喘不过气的开发者开始找捷径。很多人不约而同地发现：
+    把测试用 <code>try/catch</code> 包起来、里面一个断言都不写，测试就一定能过。
+    大家开始机械地为了凑数而写测试。
+  </p>
+  <p>
+    这些测试没有带来任何价值，反而伤害了项目：它们占用了本该做正事的时间，之后还要花钱维护。
+    指标后来被降到 90%，再降到 80%，最后干脆取消了。
+  </p>
+</div>
+
+<h3>问题二：看不见外部库里的路径</h3>
+
+<p>
+  好，假设你认真地验证了每一个结果，再配上分支覆盖率，总该可靠了吧？还是不行。
+  因为任何覆盖率工具都<strong>不会统计你调用的外部库内部的分支</strong>：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public static int parse(String input) {
+    return Integer.parseInt(input);
+}
+
+@Test
+void parses_five() {
+    int result = parse("5");
+
+    assertThat(result).isEqualTo(5);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def parse(text: str) -&gt; int:
+    return int(text)
+
+
+def test_parses_five():
+    result = parse("5")
+
+    assert result == 5
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export function parse(input: string): number {
+  return Number.parseInt(input, 10)
+}
+
+test('parses five', () =&gt; {
+  const result = parse('5')
+
+  expect(result).toBe(5)
+})
+</pre></div>
+</div>
+
+<p>
+  分支覆盖率 100%，方法唯一的结果（返回值）也验证了。可这个测试离「测全了」还差得远：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="parse 方法表面只有一条路径，但它调用的整数解析函数内部隐藏了很多分支">
+  <rect class="bx" x="325" y="12" width="110" height="32" rx="16"/>
+  <text class="lbl" x="380" y="33" text-anchor="middle">开始</text>
+  <path class="ln" d="M380 46 V68" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="300" y="72" width="160" height="36" rx="8"/>
+  <text class="mono on-b" x="380" y="95" text-anchor="middle">解析整数（库函数）</text>
+
+  <rect class="bx-d" x="40" y="126" width="680" height="84" rx="10"/>
+  <text class="sm" x="708" y="204" text-anchor="end">覆盖率工具看不见的部分</text>
+
+  <path class="ln-d" d="M330 110 L120 152" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M355 110 L262 152" marker-end="url(#ar)"/>
+  <path class="ln-g" style="stroke-width:2.2" d="M380 110 V152" marker-end="url(#ar-g)"/>
+  <path class="ln-d" d="M405 110 L498 152" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M430 110 L640 152" marker-end="url(#ar)"/>
+
+  <rect class="bx" x="70" y="156" width="100" height="34" rx="7"/>
+  <text class="mono" x="120" y="178" text-anchor="middle">null / 空</text>
+  <rect class="bx" x="212" y="156" width="100" height="34" rx="7"/>
+  <text class="mono" x="262" y="178" text-anchor="middle">""</text>
+  <rect class="bx-g" x="330" y="156" width="100" height="34" rx="7"/>
+  <text class="mono on-g" x="380" y="178" text-anchor="middle">"5"</text>
+  <rect class="bx" x="448" y="156" width="100" height="34" rx="7"/>
+  <text class="mono" x="498" y="178" text-anchor="middle">"不是数字"</text>
+  <rect class="bx" x="590" y="156" width="100" height="34" rx="7"/>
+  <text class="mono" x="640" y="178" text-anchor="middle">"999…999"</text>
+
+  <text class="lbl" x="380" y="238" text-anchor="middle">测试只走了绿色这一条。其余输入会抛异常、返回 NaN 或溢出 —— 没人知道你的代码怎么应对</text>
+  <text class="sm" x="380" y="258" text-anchor="middle">而覆盖率报告上写着：100%</text>
+</svg>
+<figcaption>图 1-6　外部库里藏着的代码路径。覆盖率既不知道有多少条，也不知道你测了几条</figcaption>
+</figure>
+
+<p>
+  这不是说覆盖率工具<em>应该</em>去统计外部库（不应该），而是说明：
+  <strong>覆盖率没法告诉你测试是否测全了，也没法告诉你测试够不够。</strong>
+</p>
+
+<h3>把覆盖率数字定成目标，会发生什么</h3>
+
+<p>
+  想象医院里有个发烧的病人。体温高是一个有用的<strong>观察结果</strong>，说明病人可能有炎症。
+  但如果医院把「让体温正常」本身定成不惜一切代价要达到的<strong>目标</strong>，
+  那最「高效」的方案就是在病床旁边装一台空调对着病人吹。数字正常了，病一点没治。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 170" role="img" aria-label="把覆盖率当指示器和当目标的对比">
+  <rect class="bx-g" x="20" y="16" width="350" height="138" rx="10"/>
+  <text class="ttl on-g" x="36" y="42">&#10003; 当作指示器（indicator）</text>
+  <text class="lbl" x="36" y="68">「核心模块覆盖率只有 30%？」</text>
+  <text class="lbl" x="36" y="90">&rarr; 去看看是哪些重要逻辑没测到</text>
+  <text class="lbl" x="36" y="112">&rarr; 为真正重要的行为补上测试</text>
+  <text class="sm" x="36" y="138">数字是结果，不是动机</text>
+
+  <rect class="bx-r" x="390" y="16" width="350" height="138" rx="10"/>
+  <text class="ttl on-r" x="406" y="42">&#10007; 当作目标（target）</text>
+  <text class="lbl" x="406" y="68">「下周五之前必须到 90%！」</text>
+  <text class="lbl" x="406" y="90">&rarr; 挑最容易刷数字的代码去测</text>
+  <text class="lbl" x="406" y="112">&rarr; 写没有断言的测试凑数</text>
+  <text class="sm" x="406" y="138">数字好看了，测试集反而更差</text>
+</svg>
+<figcaption>图 1-7　同一个数字，两种用法，结果截然相反</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#128161; 微妙但关键的区别</div>
+  <p>
+    系统的核心部分<strong>有</strong>很高的覆盖率，是好事。<br>
+    把很高的覆盖率定成<strong>硬性要求</strong>，是坏事。<br>
+    低于 60% 基本是出问题的信号；但高的数字本身什么也不能说明。覆盖率只是通往高质量测试的第一步。
+  </p>
+</div>
+
+<h2 id="success">一套成功的测试集长什么样</h2>
+
+<p>
+  说了这么多「不该怎么衡量」，那该怎么衡量？<strong>唯一可靠的办法是一个一个地评估测试集里的每个测试。</strong>
+  不需要一次做完，可以慢慢来。重点是：没有自动化手段能替你判断，你必须运用自己的判断力
+  （第 4 章会给你一把判断用的尺子）。
+</p>
+
+<p>先从整体上看，一套成功的测试集有三个特征：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128260;</span><h4>① 融入开发流程</h4>
+    <p>自动化测试的全部意义在于<strong>不断地用它</strong>。理想情况下，每一次改动 —— 哪怕再小 —— 都要跑一遍。</p></div>
+  <div class="card"><span class="ic">&#127919;</span><h4>② 只瞄准最重要的部分</h4>
+    <p>代码库的各个部分并不值得同样的关注。测试的价值不仅取决于测试怎么写，还取决于它测的是什么。</p></div>
+  <div class="card"><span class="ic">&#9878;</span><h4>③ 用最小成本换最大价值</h4>
+    <p>只留下「价值远大于维护成本」的测试。这是最难的一条，也是本教程的主线。</p></div>
+</div>
+
+<h3>测试的精力应该花在哪</h3>
+
+<p>
+  对绝大多数应用来说，最重要的部分是包含<strong>业务逻辑</strong>的那部分 —— 也就是<strong>领域模型</strong>（domain model）。
+  测试业务逻辑，是时间投入回报最高的地方。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="代码库的四个部分：领域模型应该得到最多的单元测试，基础设施、外部依赖和胶水代码只需少量或间接验证">
+  <rect class="bx-a" x="250" y="88" width="260" height="110" rx="14"/>
+  <text class="ttl on-a" x="380" y="118" text-anchor="middle">领域模型（业务逻辑）</text>
+  <text class="lbl" x="380" y="142" text-anchor="middle">折扣怎么算、能不能下单、</text>
+  <text class="lbl" x="380" y="160" text-anchor="middle">库存够不够……</text>
+  <text class="sm on-a" x="380" y="184" text-anchor="middle">单元测试的主战场 &#9733;&#9733;&#9733;</text>
+
+  <rect class="bx" x="20" y="20" width="200" height="74" rx="10"/>
+  <text class="ttl" x="120" y="46" text-anchor="middle">基础设施代码</text>
+  <text class="sm" x="120" y="66" text-anchor="middle">日志、配置、框架适配</text>
+  <text class="sm" x="120" y="82" text-anchor="middle">有复杂算法时才重点测</text>
+
+  <rect class="bx" x="540" y="20" width="200" height="74" rx="10"/>
+  <text class="ttl" x="640" y="46" text-anchor="middle">外部服务与依赖</text>
+  <text class="sm" x="640" y="66" text-anchor="middle">数据库、第三方系统</text>
+  <text class="sm" x="640" y="82" text-anchor="middle">交给集成测试</text>
+
+  <rect class="bx" x="280" y="218" width="200" height="58" rx="10"/>
+  <text class="ttl" x="380" y="242" text-anchor="middle">把一切粘起来的胶水代码</text>
+  <text class="sm" x="380" y="262" text-anchor="middle">简单带过，或间接验证</text>
+
+  <path class="ln-d" d="M220 78 L262 100"/>
+  <path class="ln-d" d="M540 78 L498 100"/>
+  <path class="ln-d" d="M380 218 V200"/>
+
+  <text class="sm" x="20" y="130">前提：领域模型必须和</text>
+  <text class="sm" x="20" y="146">其他部分<tspan class="on-a" font-weight="700">隔离开</tspan>，否则</text>
+  <text class="sm" x="20" y="162">没法单独对它集中火力</text>
+</svg>
+<figcaption>图 1-8　不是所有代码都值得同样多的测试。核心是领域模型，前提是先把它隔离出来</figcaption>
+</figure>
+
+<p>
+  集成测试可以越过领域模型，验证整个系统协同工作的情况（包括那些不重要的部分），这没问题。但重心始终在领域模型上。
+  怎么把领域模型隔离出来，是第二部分（第 4–7 章）的内容。
+</p>
+
+<h3>「识别」好测试和「写出」好测试是两种能力</h3>
+
+<p>第三个特征（最小成本换最大价值）其实包含两种不同的本事：</p>
+
+<div class="tw">
+<table>
+  <tr><th>能力</th><th>需要什么</th><th>打个比方</th></tr>
+  <tr><td><strong>识别</strong>一个测试有没有价值</td><td>一套参照系（第 4 章的「四大支柱」）</td><td>听得出一首歌好不好听</td></tr>
+  <tr><td><strong>写出</strong>一个有价值的测试</td><td>参照系 + 代码设计能力</td><td>自己能作曲</td></tr>
+</table>
+</div>
+
+<p>
+  作曲比听歌难得多。写测试也一样：你不是在真空里写测试，测试和它背后的代码是纠缠在一起的。
+  <strong>不在被测代码的设计上下功夫，就写不出有价值的测试。</strong>
+  所以这套教程虽然讲的是测试，却会花很大篇幅讲代码设计。
+</p>
+
+<h2 id="roadmap">接下来会学到什么</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 180" role="img" aria-label="教程四个部分的路线图">
+  <rect class="bx-b" x="20" y="30" width="165" height="110" rx="10"/>
+  <text class="ttl on-b" x="102" y="54" text-anchor="middle">一 · 全局视角</text>
+  <text class="sm" x="102" y="76" text-anchor="middle">第 1–3 章</text>
+  <text class="lbl" x="102" y="98" text-anchor="middle">目标、定义、</text>
+  <text class="lbl" x="102" y="116" text-anchor="middle">测试的基本写法</text>
+
+  <rect class="bx-a" x="205" y="30" width="165" height="110" rx="10"/>
+  <text class="ttl on-a" x="287" y="54" text-anchor="middle">二 · 让测试为你工作</text>
+  <text class="sm" x="287" y="76" text-anchor="middle">第 4–7 章</text>
+  <text class="lbl" x="287" y="98" text-anchor="middle">四大支柱、Mock、</text>
+  <text class="lbl" x="287" y="116" text-anchor="middle">三种风格、重构</text>
+
+  <rect class="bx-g" x="390" y="30" width="165" height="110" rx="10"/>
+  <text class="ttl on-g" x="472" y="54" text-anchor="middle">三 · 集成测试</text>
+  <text class="sm" x="472" y="76" text-anchor="middle">第 8–10 章</text>
+  <text class="lbl" x="472" y="98" text-anchor="middle">何时用真依赖、</text>
+  <text class="lbl" x="472" y="116" text-anchor="middle">Mock 实践、数据库</text>
+
+  <rect class="bx-r" x="575" y="30" width="165" height="110" rx="10"/>
+  <text class="ttl on-r" x="657" y="54" text-anchor="middle">四 · 反模式</text>
+  <text class="sm" x="657" y="76" text-anchor="middle">第 11 章</text>
+  <text class="lbl" x="657" y="98" text-anchor="middle">看着合理、</text>
+  <text class="lbl" x="657" y="116" text-anchor="middle">实际有害的做法</text>
+
+  <path class="ln" d="M187 85 H201" marker-end="url(#ar)"/>
+  <path class="ln" d="M372 85 H386" marker-end="url(#ar)"/>
+  <path class="ln" d="M557 85 H571" marker-end="url(#ar)"/>
+  <text class="sm" x="380" y="166" text-anchor="middle">第 4 章的「参照系」是全书的地基，后面每一章都在用它分析具体问题</text>
+</svg>
+<figcaption>图 1-9　全书路线图</figcaption>
+</figure>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>代码会自然腐化。每次改动都增加混乱（熵），测试是对抗这个趋势的安全网。</li>
+  <li>单元测试的目标是<strong>让项目可持续地增长</strong>。「让设计更好」只是副作用。</li>
+  <li>坏测试和没有测试的结局一样：要么停滞，要么每次发布都带一堆回归。</li>
+  <li>每个测试都有价值和成本两面。只保留净价值为正的测试。<strong>生产代码和测试代码都是负债。</strong></li>
+  <li>「代码能不能被测」和「覆盖率」都是<strong>好的负面指标、差的正面指标</strong>。</li>
+  <li>分支覆盖率比行覆盖率更诚实，但它不知道有没有断言，也看不见第三方库里的路径。</li>
+  <li>把覆盖率数字定成硬性目标会产生反向激励。核心部分覆盖率高是好事，强制要求高是坏事。</li>
+  <li>成功的测试集：融入开发流程；只瞄准最重要的代码（领域模型）；用最小维护成本换最大价值。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>团队的覆盖率是 95%，能说明测试质量很高吗？</summary>
+  <p>不能。高覆盖率只说明代码被执行过，不说明结果被验证过，更看不到外部库里的路径。它只能排除「测试严重不足」这一种情况。</p>
+</details>
+<details class="quiz">
+  <summary>一个方法有 4 条分支，测试走了 3 条，行覆盖率是 100%。分支覆盖率是多少？哪个数字更可信？</summary>
+  <p>分支覆盖率是 3/4 = 75%。分支覆盖率更可信，因为它不受代码排版和写法的影响。</p>
+</details>
+<details class="quiz">
+  <summary>为什么说「测试越多越好」是错的？</summary>
+  <p>测试也是代码，也有 Bug，也要维护。一个净价值为负的测试（比如经常误报、又抓不到真问题）会拖慢整个团队。应该追求的是高价值测试的数量，而不是测试的数量。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>挑一种你熟悉的语言，把本章的 <code>isStringLong</code> 和它的测试敲出来，用覆盖率工具跑一遍
+        （Java 用 JaCoCo，Python 用 <code>pytest --cov --cov-branch</code>，TypeScript 用 <code>vitest --coverage</code>）。</li>
+    <li>分别用「5 行」和「3 行」两种写法，观察行覆盖率和分支覆盖率各自怎么变。</li>
+    <li>把测试里的断言删掉再跑一次。覆盖率变了吗？这个测试还有用吗？</li>
+    <li>打开你手头项目里的任意一个测试文件，挑三个测试，各用一句话写下：它带来了什么价值？上一次它变红是因为真 Bug 还是误报？</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

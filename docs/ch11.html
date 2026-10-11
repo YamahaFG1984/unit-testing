@@ -1,0 +1,1287 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 11 章 · 单元测试反模式 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="11">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 11 章 · 最后一章</span>
+<h1>单元测试反模式</h1>
+<p class="lede">
+  反模式是这样一种东西：它是某个常见问题的常见解法，<strong>表面上看很合理</strong>，往后走却会带来麻烦。
+  这一章收集了六个最常见的。它们大多可以从第二部分的基本原理直接推出来，但值得一个个挑明 —— 你很可能已经踩过其中几个了。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>知道为什么不该测私有方法，以及「私有方法太复杂」时真正该做什么</li>
+    <li>不为了测试而暴露私有状态</li>
+    <li>不把领域知识（算法实现）泄漏到测试里</li>
+    <li>识别代码污染，并用更干净的方式替代</li>
+    <li>理解为什么「Mock 具体类」是单一职责被破坏的信号</li>
+    <li>在测试里正确地处理时间</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="六个反模式一览，以及每个反模式的正确做法">
+  <rect class="bx" x="14" y="14" width="236" height="124" rx="10"/>
+  <text class="ttl on-r" x="28" y="38">① 测试私有方法</text>
+  <text class="sm" x="28" y="60">把私有方法公开出来好让测试调用</text>
+  <text class="sm on-g" x="28" y="92">&#10003; 通过公开行为间接测；</text>
+  <text class="sm on-g" x="28" y="110">太复杂就抽成独立的类</text>
+
+  <rect class="bx" x="262" y="14" width="236" height="124" rx="10"/>
+  <text class="ttl on-r" x="276" y="38">② 暴露私有状态</text>
+  <text class="sm" x="276" y="60">把私有字段公开出来好让测试断言</text>
+  <text class="sm on-g" x="276" y="92">&#10003; 看生产代码怎么用这个类，</text>
+  <text class="sm on-g" x="276" y="110">测试就怎么用</text>
+
+  <rect class="bx" x="510" y="14" width="236" height="124" rx="10"/>
+  <text class="ttl on-r" x="524" y="38">③ 向测试泄漏领域知识</text>
+  <text class="sm" x="524" y="60">在测试里把算法又实现了一遍</text>
+  <text class="sm on-g" x="524" y="92">&#10003; 把期望结果直接写死</text>
+
+  <rect class="bx" x="14" y="150" width="236" height="124" rx="10"/>
+  <text class="ttl on-r" x="28" y="174">④ 代码污染</text>
+  <text class="sm" x="28" y="196">生产代码里加只为测试服务的开关</text>
+  <text class="sm on-g" x="28" y="228">&#10003; 接口 + 测试专用的假实现</text>
+
+  <rect class="bx" x="262" y="150" width="236" height="124" rx="10"/>
+  <text class="ttl on-r" x="276" y="174">⑤ Mock 具体类</text>
+  <text class="sm" x="276" y="196">为保留一部分功能而只替换一部分</text>
+  <text class="sm on-g" x="276" y="228">&#10003; 一个类两种职责 &rarr; 拆成两个类</text>
+
+  <rect class="bx" x="510" y="150" width="236" height="124" rx="10"/>
+  <text class="ttl on-r" x="524" y="174">⑥ 把时间当环境上下文</text>
+  <text class="sm" x="524" y="196">用可替换的全局静态「时钟」</text>
+  <text class="sm on-g" x="524" y="228">&#10003; 显式注入，最好直接传值</text>
+</svg>
+<figcaption>图 11-1　本章的六个反模式和各自的出路</figcaption>
+</figure>
+
+<h2 id="private-methods">反模式一：测试私有方法</h2>
+
+<p>「怎么测私有方法？」是最常被问到的问题之一。简短的回答是：<strong>根本不该测。</strong>不过里面有不少细节。</p>
+
+<h3>私有方法与测试脆弱性</h3>
+
+<p>
+  为了测试而把本该私有的方法公开，违反了第 5 章的基本原则：<strong>只测可观察行为</strong>。
+  这会让测试和实现细节耦合，最终损害抵抗重构 —— 四根支柱里最重要的那根。
+  不要直接测私有方法，而是<strong>通过它所服务的可观察行为间接地测</strong>。
+</p>
+
+<h3>私有方法与覆盖率不足</h3>
+
+<p>有时私有方法太复杂，通过可观察行为去测达不到足够的覆盖。假设可观察行为本身已经有合理的测试覆盖，那么可能有两种情况：</p>
+<ul>
+  <li><strong>这是死代码。</strong>没被覆盖的代码如果根本没被用到，多半是重构后留下的残余。删掉它。</li>
+  <li><strong>缺少一个抽象。</strong>私有方法太复杂、很难通过类的公开 API 去测，说明这里藏着一个应该被抽成独立类的抽象。</li>
+</ul>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✗ 复杂的私有方法"><pre>
+public class Order {
+    private Customer customer;
+    private List&lt;Product&gt; products;
+
+    public String generateDescription() {                // 很简单的公开方法……
+        return "Customer name: " + customer.getName() + ", " +
+               "total number of products: " + products.size() + ", " +
+               "total price: " + getPrice();
+    }
+
+    private BigDecimal getPrice() {                      // ……用到了一个复杂的私有方法
+        BigDecimal basePrice = /* 根据 products 计算 */;
+        BigDecimal discounts = /* 根据 customer 计算 */;
+        BigDecimal taxes = /* 根据 products 计算 */;
+        return basePrice.subtract(discounts).add(taxes);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✗ 复杂的私有方法"><pre>
+class Order:
+    def __init__(self, customer: Customer, products: list[Product]) -&gt; None:
+        self._customer = customer
+        self._products = products
+
+    def generate_description(self) -&gt; str:               # 很简单的公开方法……
+        return (f"Customer name: {self._customer.name}, "
+                f"total number of products: {len(self._products)}, "
+                f"total price: {self._get_price()}")
+
+    def _get_price(self) -&gt; Decimal:                     # ……用到了一个复杂的私有方法
+        base_price = ...   # 根据 products 计算
+        discounts = ...    # 根据 customer 计算
+        taxes = ...        # 根据 products 计算
+        return base_price - discounts + taxes
+</pre></div>
+<div class="code" data-lang="ts" data-file="✗ 复杂的私有方法"><pre>
+export class Order {
+  constructor(private customer: Customer, private products: Product[]) {}
+
+  generateDescription(): string {                        // 很简单的公开方法……
+    return `Customer name: ${this.customer.name}, ` +
+           `total number of products: ${this.products.length}, ` +
+           `total price: ${this.getPrice()}`
+  }
+
+  private getPrice(): number {                           // ……用到了一个复杂的私有方法
+    const basePrice = /* 根据 products 计算 */ 0
+    const discounts = /* 根据 customer 计算 */ 0
+    const taxes = /* 根据 products 计算 */ 0
+    return basePrice - discounts + taxes
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.1 · 仓库 <code>code/Book/Chapter11/PrivateMethods/PrivateMethods.cs</code></p>
+
+<p>
+  <code>getPrice()</code> 包含重要的业务逻辑，需要充分测试。但别把它改成 public —— 那段逻辑是一个<strong>缺失的抽象</strong>，把它显式地抽出来：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✓ 把抽象抽出来"><pre>
+public class Order {
+    private Customer customer;
+    private List&lt;Product&gt; products;
+
+    public String generateDescription() {
+        var calc = new PriceCalculator();
+
+        return "Customer name: " + customer.getName() + ", " +
+               "total number of products: " + products.size() + ", " +
+               "total price: " + calc.calculate(customer, products);
+    }
+}
+
+public class PriceCalculator {
+    public BigDecimal calculate(Customer customer, List&lt;Product&gt; products) {
+        BigDecimal basePrice = /* 根据 products 计算 */;
+        BigDecimal discounts = /* 根据 customer 计算 */;
+        BigDecimal taxes = /* 根据 products 计算 */;
+        return basePrice.subtract(discounts).add(taxes);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✓ 把抽象抽出来"><pre>
+class Order:
+    def __init__(self, customer: Customer, products: list[Product]) -&gt; None:
+        self._customer = customer
+        self._products = products
+
+    def generate_description(self) -&gt; str:
+        calc = PriceCalculator()
+
+        return (f"Customer name: {self._customer.name}, "
+                f"total number of products: {len(self._products)}, "
+                f"total price: {calc.calculate(self._customer, self._products)}")
+
+
+class PriceCalculator:
+    def calculate(self, customer: Customer, products: list[Product]) -&gt; Decimal:
+        base_price = ...   # 根据 products 计算
+        discounts = ...    # 根据 customer 计算
+        taxes = ...        # 根据 products 计算
+        return base_price - discounts + taxes
+</pre></div>
+<div class="code" data-lang="ts" data-file="✓ 把抽象抽出来"><pre>
+export class Order {
+  constructor(private customer: Customer, private products: Product[]) {}
+
+  generateDescription(): string {
+    const calc = new PriceCalculator()
+
+    return `Customer name: ${this.customer.name}, ` +
+           `total number of products: ${this.products.length}, ` +
+           `total price: ${calc.calculate(this.customer, this.products)}`
+  }
+}
+
+export class PriceCalculator {
+  calculate(customer: Customer, products: Product[]): number {
+    const basePrice = /* 根据 products 计算 */ 0
+    const discounts = /* 根据 customer 计算 */ 0
+    const taxes = /* 根据 products 计算 */ 0
+    return basePrice - discounts + taxes
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.2</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="把复杂的私有方法抽成独立的类之后，可以直接对它做基于输出的测试">
+  <rect class="bx" x="20" y="24" width="300" height="150" rx="12"/>
+  <text class="ttl" x="36" y="48">Order</text>
+  <rect class="bx" x="36" y="60" width="268" height="36" rx="6"/><text class="mono sm" x="48" y="83">+ generateDescription()　简单</text>
+  <rect class="bx-r" x="36" y="104" width="268" height="54" rx="6"/>
+  <text class="mono sm on-r" x="48" y="126">- getPrice()　复杂、重要</text>
+  <text class="sm" x="48" y="146">测试够不着；公开它又泄漏实现细节</text>
+
+  <path class="ln-a" d="M324 100 H386" marker-end="url(#ar-a)"/>
+  <text class="sm on-a" x="355" y="90" text-anchor="middle">抽出来</text>
+
+  <rect class="bx" x="390" y="24" width="200" height="70" rx="12"/>
+  <text class="ttl" x="490" y="50" text-anchor="middle">Order</text>
+  <text class="mono sm" x="490" y="74" text-anchor="middle">+ generateDescription()</text>
+  <path class="ln" d="M490 96 V116" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="390" y="120" width="200" height="54" rx="12"/>
+  <text class="ttl on-g" x="490" y="142" text-anchor="middle">PriceCalculator</text>
+  <text class="mono sm" x="490" y="162" text-anchor="middle">+ calculate(…)</text>
+  <rect class="bx" x="640" y="128" width="100" height="38" rx="19"/><text class="lbl" x="690" y="152" text-anchor="middle">测试</text>
+  <path class="ln-g" d="M636 147 H594" marker-end="url(#ar-g)"/>
+  <text class="sm" x="570" y="200" text-anchor="middle">没有隐藏的输入输出 &rarr; 可以用基于输出的测试（第 6 章）</text>
+</svg>
+<figcaption>图 11-2　「想测私有方法」的冲动，往往是在提醒你：这里少了一个类</figcaption>
+</figure>
+
+<h3>什么时候可以测私有方法</h3>
+
+<p>回顾第 5 章那张表：</p>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>可观察行为</th><th>实现细节</th></tr>
+  <tr><td><strong>公开</strong></td><td style="color:var(--green);font-weight:700">好</td><td style="color:var(--red);font-weight:700">坏</td></tr>
+  <tr><td><strong>私有</strong></td><td>不适用（？）</td><td style="color:var(--green);font-weight:700">好</td></tr>
+</table>
+</div>
+
+<p>
+  测私有方法本身并不坏，它之所以坏，是因为私有方法通常<strong>就是</strong>实现细节。而在极少数情况下，一个方法可以<strong>既是私有的，又属于可观察行为</strong>
+  （所以左下角那格其实不完全是「不适用」）。
+</p>
+
+<p>
+  例子：一个管理信贷查询的系统。新的查询每天批量直接导入数据库，管理员随后逐个审批。<code>Inquiry</code> 类的构造函数是私有的 ——
+  因为对象由 ORM 从数据库还原（ORM 通过反射调用私有构造函数），而系统本身不负责创建查询。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class Inquiry {
+    private boolean isApproved;
+    private LocalDateTime timeApproved;
+
+    private Inquiry(boolean isApproved, LocalDateTime timeApproved) {   // 私有构造函数
+        if (isApproved &amp;&amp; timeApproved == null) {
+            throw new IllegalArgumentException();
+        }
+        this.isApproved = isApproved;
+        this.timeApproved = timeApproved;
+    }
+
+    public void approve(LocalDateTime now) {
+        if (isApproved) return;
+
+        isApproved = true;
+        timeApproved = now;
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class Inquiry:
+    # Python 没有真正的私有构造函数；常见做法是约定「只由 ORM / 工厂创建」，
+    # 或者提供一个带下划线的类方法供 ORM 使用。
+    def __init__(self, is_approved: bool, time_approved: datetime | None) -&gt; None:
+        if is_approved and time_approved is None:
+            raise ValueError()
+        self.is_approved = is_approved
+        self.time_approved = time_approved
+
+    def approve(self, now: datetime) -&gt; None:
+        if self.is_approved:
+            return
+
+        self.is_approved = True
+        self.time_approved = now
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class Inquiry {
+  private constructor(                                  // 私有构造函数
+    public isApproved: boolean,
+    public timeApproved: Date | null,
+  ) {
+    if (isApproved &amp;&amp; timeApproved === null) {
+      throw new Error()
+    }
+  }
+
+  approve(now: Date): void {
+    if (this.isApproved) return
+
+    this.isApproved = true
+    this.timeApproved = now
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.3</p>
+
+<p>
+  审批逻辑显然很重要，应该测；可你连一个 <code>Inquiry</code> 对象都创建不出来。
+  这个构造函数就是「既私有又属于可观察行为」的例子：它履行的是<strong>与 ORM 之间的契约</strong>，私有并不让这个契约变得不重要 —— 没有它，ORM 就没法从数据库还原对象。
+</p>
+<p>
+  所以在这个特定情况下，把构造函数改成 public <strong>不会</strong>导致测试脆弱。只要确保构造函数里有维持封装所需的全部前置条件
+  （这里是：已审批的查询必须有审批时间）。如果你想让公开 API 尽量小，也可以在测试里用反射创建对象 —— 看着像黑科技，但你只是在做 ORM 做的事。
+</p>
+
+<h2 id="private-state">反模式二：暴露私有状态</h2>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class Customer {
+    private CustomerStatus status = CustomerStatus.REGULAR;     // 私有状态
+
+    public void promote() {
+        status = CustomerStatus.PREFERRED;
+    }
+
+    public BigDecimal getDiscount() {
+        return status == CustomerStatus.PREFERRED
+            ? new BigDecimal("0.05") : BigDecimal.ZERO;
+    }
+}
+
+public enum CustomerStatus { REGULAR, PREFERRED }
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class CustomerStatus(Enum):
+    REGULAR = 1
+    PREFERRED = 2
+
+
+class Customer:
+    def __init__(self) -&gt; None:
+        self._status = CustomerStatus.REGULAR                   # 私有状态
+
+    def promote(self) -&gt; None:
+        self._status = CustomerStatus.PREFERRED
+
+    def get_discount(self) -&gt; Decimal:
+        return Decimal("0.05") if self._status == CustomerStatus.PREFERRED else Decimal("0")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export enum CustomerStatus { Regular, Preferred }
+
+export class Customer {
+  private status = CustomerStatus.Regular                       // 私有状态
+
+  promote(): void {
+    this.status = CustomerStatus.Preferred
+  }
+
+  getDiscount(): number {
+    return this.status === CustomerStatus.Preferred ? 0.05 : 0
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.4 · 仓库 <code>code/Book/Chapter11/PrivateState/PrivateState.cs</code></p>
+
+<p>
+  怎么测 <code>promote()</code>？它的副作用是改了 <code>status</code> 字段，可字段是私有的。
+  很诱人的做法是把它改成 public —— 毕竟，「状态变了」不正是调用 <code>promote()</code> 的最终目的吗？
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 测试不应该有任何特权</div>
+  <p>
+    <strong>测试与被测系统交互的方式，应该和生产代码完全一样。</strong>
+    <code>status</code> 对生产代码是隐藏的，所以它不属于可观察行为；暴露它就是让测试和实现细节耦合。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="Customer 类对外只公开 promote 和 getDiscount，status 是私有的。生产代码只通过公开成员使用它，测试也应该只通过公开成员使用它，不应该伸手去读私有的 status">
+  <rect class="bx" x="270" y="20" width="220" height="190" rx="12"/>
+  <text class="ttl" x="380" y="46" text-anchor="middle">Customer</text>
+  <rect class="bx-g" x="286" y="60" width="188" height="36" rx="6"/><text class="mono sm on-g" x="380" y="83" text-anchor="middle">+ promote()</text>
+  <rect class="bx-g" x="286" y="104" width="188" height="36" rx="6"/><text class="mono sm on-g" x="380" y="127" text-anchor="middle">+ getDiscount()</text>
+  <rect class="bx-d" x="286" y="156" width="188" height="36" rx="6"/><text class="mono sm" x="380" y="179" text-anchor="middle">- status　&#128274;</text>
+
+  <rect class="bx" x="20" y="74" width="170" height="52" rx="10"/>
+  <text class="lbl" x="105" y="96" text-anchor="middle">生产代码</text>
+  <text class="sm" x="105" y="114" text-anchor="middle">只关心升级后的折扣</text>
+  <path class="ln" d="M192 90 L282 80" marker-end="url(#ar)"/>
+  <path class="ln" d="M192 110 L282 120" marker-end="url(#ar)"/>
+
+  <rect class="bx" x="570" y="74" width="170" height="52" rx="10"/>
+  <text class="lbl" x="655" y="96" text-anchor="middle">测试</text>
+  <text class="sm" x="655" y="114" text-anchor="middle">和生产代码走同样的门</text>
+  <path class="ln-g" d="M568 90 L478 80" marker-end="url(#ar-g)"/>
+  <path class="ln-g" d="M568 110 L478 120" marker-end="url(#ar-g)"/>
+  <path class="ln-r" d="M640 128 C620 170 540 176 478 176" marker-end="url(#ar-r)" style="stroke-dasharray:5 4"/>
+  <text class="sm on-r" x="652" y="168" text-anchor="middle">&#10007; 不要为了断言</text>
+  <text class="sm on-r" x="652" y="184" text-anchor="middle">把 status 改成公开的</text>
+  <text class="sm" x="105" y="168" text-anchor="middle">生产代码用不到的东西，</text>
+  <text class="sm" x="105" y="184" text-anchor="middle">就不是可观察行为</text>
+</svg>
+<figcaption>图 11-3　测试没有特权：生产代码看得见什么，测试就只看什么</figcaption>
+</figure>
+
+<p>
+  那怎么办？<strong>看生产代码是怎么用这个类的。</strong>生产代码不关心客户的状态（否则这个字段就该是公开的），
+  它唯一关心的是客户升级后能拿到的<strong>折扣</strong>。所以测试该验证的是：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void a_new_customer_has_no_discount() {
+    var sut = new Customer();
+
+    assertThat(sut.getDiscount()).isEqualByComparingTo("0");
+}
+
+@Test
+void a_promoted_customer_gets_a_5_percent_discount() {
+    var sut = new Customer();
+
+    sut.promote();
+
+    assertThat(sut.getDiscount()).isEqualByComparingTo("0.05");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_a_new_customer_has_no_discount():
+    sut = Customer()
+
+    assert sut.get_discount() == Decimal("0")
+
+
+def test_a_promoted_customer_gets_a_5_percent_discount():
+    sut = Customer()
+
+    sut.promote()
+
+    assert sut.get_discount() == Decimal("0.05")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('a new customer has no discount', () =&gt; {
+  const sut = new Customer()
+
+  expect(sut.getDiscount()).toBe(0)
+})
+
+test('a promoted customer gets a 5 percent discount', () =&gt; {
+  const sut = new Customer()
+
+  sut.promote()
+
+  expect(sut.getDiscount()).toBe(0.05)
+})
+</pre></div>
+</div>
+
+<p>
+  以后如果生产代码开始使用客户状态字段了，测试也就可以用它了 —— 因为那时它正式成了可观察行为的一部分。
+  <strong>为了可测试性而扩大公开 API 的范围，是坏做法。</strong>
+</p>
+
+<h2 id="leaking-knowledge">反模式三：向测试泄漏领域知识</h2>
+
+<p>这个反模式常出现在测复杂算法的测试里。用一个（其实不复杂的）算法来演示：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✗ 测试把算法又实现了一遍"><pre>
+public class Calculator {
+    public static int add(int value1, int value2) {
+        return value1 + value2;
+    }
+}
+
+@ParameterizedTest
+@CsvSource({"1, 3", "11, 33", "100, 500"})
+void adding_two_numbers(int value1, int value2) {
+    int expected = value1 + value2;          // ← 泄漏：这就是生产代码的实现
+
+    int actual = Calculator.add(value1, value2);
+
+    assertThat(actual).isEqualTo(expected);
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✗ 测试把算法又实现了一遍"><pre>
+def add(value1: int, value2: int) -&gt; int:
+    return value1 + value2
+
+
+@pytest.mark.parametrize("value1, value2", [(1, 3), (11, 33), (100, 500)])
+def test_adding_two_numbers(value1, value2):
+    expected = value1 + value2               # ← 泄漏：这就是生产代码的实现
+
+    actual = add(value1, value2)
+
+    assert actual == expected
+</pre></div>
+<div class="code" data-lang="ts" data-file="✗ 测试把算法又实现了一遍"><pre>
+export function add(value1: number, value2: number): number {
+  return value1 + value2
+}
+
+test.each([[1, 3], [11, 33], [100, 500]])('adding two numbers', (value1, value2) =&gt; {
+  const expected = value1 + value2           // ← 泄漏：这就是生产代码的实现
+
+  const actual = add(value1, value2)
+
+  expect(actual).toBe(expected)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.5 / 11.6 · 仓库 <code>code/Book/Chapter11/LeakingKnowledge/LeakingKnowledge.cs</code></p>
+
+<p>
+  看起来没问题，但这个测试<strong>复制了生产代码的算法实现</strong>。这里只有一行，似乎无伤大雅 —— 那是因为例子简化了。
+  原书作者见过覆盖复杂算法的测试，在准备段里把算法原样重写一遍，基本就是从生产代码复制粘贴过去的。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="泄漏领域知识的测试相当于用生产代码的副本去验证生产代码，两边错得一样就永远发现不了。正确做法是用事先独立算好的结果去验证">
+  <rect class="bx-r" x="14" y="16" width="356" height="188" rx="12"/>
+  <text class="ttl on-r" x="30" y="42">&#10007; 照镜子：自己验证自己</text>
+  <rect class="bx" x="34" y="60" width="140" height="50" rx="8"/><text class="lbl" x="104" y="82" text-anchor="middle">生产代码</text><text class="mono sm" x="104" y="100" text-anchor="middle">a + b</text>
+  <rect class="bx" x="210" y="60" width="140" height="50" rx="8"/><text class="lbl" x="280" y="82" text-anchor="middle">测试里的「期望值」</text><text class="mono sm" x="280" y="100" text-anchor="middle">a + b</text>
+  <path class="ln-r" d="M176 85 H206" marker-end="url(#ar-r)" marker-start="url(#ar-r)"/>
+  <text class="sm" x="30" y="136">算法写错了？两边错得一模一样，测试照样绿</text>
+  <text class="sm" x="30" y="156">算法改了？测试红了，团队多半直接把新算法</text>
+  <text class="sm" x="30" y="174">复制到测试里 —— 根本不去查原因</text>
+  <text class="sm on-r" x="30" y="194">抵抗重构得分几乎为零</text>
+
+  <rect class="bx-g" x="390" y="16" width="356" height="188" rx="12"/>
+  <text class="ttl on-g" x="406" y="42">&#10003; 对答案：独立算好的结果</text>
+  <rect class="bx" x="410" y="60" width="140" height="50" rx="8"/><text class="lbl" x="480" y="82" text-anchor="middle">生产代码</text><text class="mono sm" x="480" y="100" text-anchor="middle">a + b</text>
+  <rect class="bx" x="586" y="60" width="140" height="50" rx="8"/><text class="lbl" x="656" y="82" text-anchor="middle">写死的期望值</text><text class="mono sm" x="656" y="100" text-anchor="middle">(1, 3) → 4</text>
+  <path class="ln-g" d="M552 85 H582" marker-end="url(#ar-g)" marker-start="url(#ar-g)"/>
+  <text class="sm" x="406" y="136">期望值来自 SUT 以外的地方：</text>
+  <text class="sm" x="406" y="156">· 最好请领域专家帮着算</text>
+  <text class="sm" x="406" y="174">· 重构遗留系统时，可以用旧代码的输出</text>
+  <text class="sm on-g" x="406" y="194">算法怎么实现都行，结果对就行</text>
+</svg>
+<figcaption>图 11-4　测试是独立的检查点，不能用被检查者自己的逻辑来检查它</figcaption>
+</figure>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✓ 不含领域知识的测试"><pre>
+@ParameterizedTest
+@CsvSource({
+    "1,   3,   4",
+    "11,  33,  44",
+    "100, 500, 600"
+})
+void adding_two_numbers(int value1, int value2, int expected) {
+    int actual = Calculator.add(value1, value2);
+
+    assertThat(actual).isEqualTo(expected);
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✓ 不含领域知识的测试"><pre>
+@pytest.mark.parametrize("value1, value2, expected", [
+    (1, 3, 4),
+    (11, 33, 44),
+    (100, 500, 600),
+])
+def test_adding_two_numbers(value1, value2, expected):
+    actual = add(value1, value2)
+
+    assert actual == expected
+</pre></div>
+<div class="code" data-lang="ts" data-file="✓ 不含领域知识的测试"><pre>
+test.each([
+  [1, 3, 4],
+  [11, 33, 44],
+  [100, 500, 600],
+])('adding two numbers', (value1, value2, expected) =&gt; {
+  const actual = add(value1, value2)
+
+  expect(actual).toBe(expected)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.7</p>
+
+<div class="box tip">
+  <div class="t">&#128161; 在单元测试里，写死期望结果是好做法</div>
+  <p>
+    乍一听违反直觉。关键在于这些写死的值要用 <strong>SUT 以外的方式</strong>预先算好。
+    <strong>写测试时不要暗示任何特定的实现</strong> —— 这也是第 4 章「黑盒测试」和第 9 章「测试是审计员」的同一个道理。
+  </p>
+</div>
+
+<h2 id="code-pollution">反模式四：代码污染</h2>
+
+<div class="term">
+  <b class="w">代码污染（code pollution）</b>
+  <p>在生产代码里添加<strong>只有测试才需要</strong>的代码。常见形式是各种开关。</p>
+</div>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✗ 带布尔开关的 Logger"><pre>
+public class Logger {
+    private final boolean isTestEnvironment;
+
+    public Logger(boolean isTestEnvironment) {       // 开关
+        this.isTestEnvironment = isTestEnvironment;
+    }
+
+    public void log(String text) {
+        if (isTestEnvironment) return;               // 开关
+
+        /* 记录日志 */
+    }
+}
+
+@Test
+void some_test() {
+    var logger = new Logger(true);                   // 传 true 表示测试环境
+    var sut = new Controller();
+
+    sut.someMethod(logger);
+
+    /* 断言 */
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✗ 带布尔开关的 Logger"><pre>
+class Logger:
+    def __init__(self, is_test_environment: bool) -&gt; None:   # 开关
+        self._is_test_environment = is_test_environment
+
+    def log(self, text: str) -&gt; None:
+        if self._is_test_environment:                        # 开关
+            return
+
+        ...  # 记录日志
+
+
+def test_something():
+    logger = Logger(True)                                    # 传 True 表示测试环境
+    sut = Controller()
+
+    sut.some_method(logger)
+
+    ...  # 断言
+</pre></div>
+<div class="code" data-lang="ts" data-file="✗ 带布尔开关的 Logger"><pre>
+export class Logger {
+  constructor(private readonly isTestEnvironment: boolean) {}   // 开关
+
+  log(text: string): void {
+    if (this.isTestEnvironment) return                          // 开关
+
+    /* 记录日志 */
+  }
+}
+
+test('some test', () =&gt; {
+  const logger = new Logger(true)                               // 传 true 表示测试环境
+  const sut = new Controller()
+
+  sut.someMethod(logger)
+
+  /* 断言 */
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.8 / 11.9 · 仓库 <code>code/Book/Chapter11/CodePollution/CodePollution.cs</code></p>
+
+<p>
+  代码污染的问题在于它把测试代码和生产代码<strong>搅在一起</strong>，抬高了后者的维护成本。出路是：<strong>让测试代码留在生产代码库之外。</strong>
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✓ 接口 + 测试专用的假实现"><pre>
+public interface ILogger {
+    void log(String text);
+}
+
+public class Logger implements ILogger {             // 属于生产代码
+    public void log(String text) {
+        /* 记录日志 */
+    }
+}
+
+public class FakeLogger implements ILogger {         // 属于测试代码
+    public void log(String text) {
+        /* 什么都不做 */
+    }
+}
+
+public class Controller {
+    public void someMethod(ILogger logger) {
+        logger.log("SomeMethod is called");
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✓ 协议 + 测试专用的假实现"><pre>
+class LoggerProtocol(Protocol):
+    def log(self, text: str) -&gt; None: ...
+
+
+class Logger:                                        # 属于生产代码
+    def log(self, text: str) -&gt; None:
+        ...  # 记录日志
+
+
+class FakeLogger:                                    # 属于测试代码
+    def log(self, text: str) -&gt; None:
+        pass  # 什么都不做
+
+
+class Controller:
+    def some_method(self, logger: LoggerProtocol) -&gt; None:
+        logger.log("SomeMethod is called")
+</pre></div>
+<div class="code" data-lang="ts" data-file="✓ 接口 + 测试专用的假实现"><pre>
+export interface ILogger {
+  log(text: string): void
+}
+
+export class Logger implements ILogger {             // 属于生产代码
+  log(text: string): void {
+    /* 记录日志 */
+  }
+}
+
+export class FakeLogger implements ILogger {         // 属于测试代码
+  log(_text: string): void {
+    /* 什么都不做 */
+  }
+}
+
+export class Controller {
+  someMethod(logger: ILogger): void {
+    logger.log('SomeMethod is called')
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.10</p>
+
+<div class="box note">
+  <div class="t">&#9432; 那个接口本身不也是一种污染吗？</div>
+  <p>
+    严格说是的：<code>ILogger</code> 待在生产代码库里，却只是为了测试才需要。但这种污染<strong>危害小得多、也好处理得多</strong>：
+  </p>
+  <ul>
+    <li>你不可能意外执行到一条「本来不打算在生产环境走」的代码路径。</li>
+    <li>接口里没有代码，只是契约，所以接口里<strong>不可能有 Bug</strong>。和布尔开关不同，它不增加潜在 Bug 的面积。</li>
+  </ul>
+</div>
+
+<h2 id="mock-concrete">反模式五：Mock 具体类</h2>
+
+<p>
+  到目前为止的 Mock 例子都是针对接口的。另一种做法是 Mock <strong>具体类</strong>，这样可以<strong>保留原类的一部分功能</strong>，有时看起来很方便。
+  但它有个严重的缺点：它是违反<strong>单一职责原则</strong>的结果。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class StatisticsCalculator {
+    public Statistics calculate(int customerId) {
+        List&lt;DeliveryRecord&gt; records = getDeliveries(customerId);
+
+        double totalWeight = records.stream().mapToDouble(DeliveryRecord::weight).sum();
+        double totalCost = records.stream().mapToDouble(DeliveryRecord::cost).sum();
+
+        return new Statistics(totalWeight, totalCost);
+    }
+
+    public List&lt;DeliveryRecord&gt; getDeliveries(int customerId) {
+        /* 调用进程外依赖，取得配送记录 */
+    }
+}
+
+public class CustomerController {
+    private final StatisticsCalculator calculator;
+
+    public CustomerController(StatisticsCalculator calculator) {
+        this.calculator = calculator;
+    }
+
+    public String getStatistics(int customerId) {
+        Statistics s = calculator.calculate(customerId);
+        return "Total weight delivered: " + s.totalWeight() + ". Total cost: " + s.totalCost();
+    }
+}
+
+// ✗ 测试：Mock 具体类，只替换其中一个方法
+@Test
+void customer_with_no_deliveries() {
+    StatisticsCalculator stub = spy(new StatisticsCalculator());   // 保留真实行为……
+    doReturn(List.of()).when(stub).getDeliveries(1);               // ……只换掉这一个方法
+    var sut = new CustomerController(stub);
+
+    String result = sut.getStatistics(1);
+
+    assertThat(result).isEqualTo("Total weight delivered: 0.0. Total cost: 0.0");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class StatisticsCalculator:
+    def calculate(self, customer_id: int) -&gt; tuple[float, float]:
+        records = self.get_deliveries(customer_id)
+
+        total_weight = sum(r.weight for r in records)
+        total_cost = sum(r.cost for r in records)
+
+        return total_weight, total_cost
+
+    def get_deliveries(self, customer_id: int) -&gt; list[DeliveryRecord]:
+        ...  # 调用进程外依赖，取得配送记录
+
+
+class CustomerController:
+    def __init__(self, calculator: StatisticsCalculator) -&gt; None:
+        self._calculator = calculator
+
+    def get_statistics(self, customer_id: int) -&gt; str:
+        total_weight, total_cost = self._calculator.calculate(customer_id)
+        return f"Total weight delivered: {total_weight}. Total cost: {total_cost}"
+
+
+# ✗ 测试：patch 具体类，只替换其中一个方法
+def test_customer_with_no_deliveries():
+    calculator = StatisticsCalculator()                            # 保留真实行为……
+    with patch.object(calculator, "get_deliveries", return_value=[]):   # ……只换掉这一个方法
+        sut = CustomerController(calculator)
+
+        result = sut.get_statistics(1)
+
+    assert result == "Total weight delivered: 0. Total cost: 0"
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class StatisticsCalculator {
+  calculate(customerId: number): { totalWeight: number; totalCost: number } {
+    const records = this.getDeliveries(customerId)
+
+    const totalWeight = records.reduce((sum, r) =&gt; sum + r.weight, 0)
+    const totalCost = records.reduce((sum, r) =&gt; sum + r.cost, 0)
+
+    return { totalWeight, totalCost }
+  }
+
+  getDeliveries(customerId: number): DeliveryRecord[] {
+    /* 调用进程外依赖，取得配送记录 */
+  }
+}
+
+export class CustomerController {
+  constructor(private readonly calculator: StatisticsCalculator) {}
+
+  getStatistics(customerId: number): string {
+    const { totalWeight, totalCost } = this.calculator.calculate(customerId)
+    return `Total weight delivered: ${totalWeight}. Total cost: ${totalCost}`
+  }
+}
+
+// ✗ 测试：spyOn 具体类，只替换其中一个方法
+test('customer with no deliveries', () =&gt; {
+  const calculator = new StatisticsCalculator()                    // 保留真实行为……
+  vi.spyOn(calculator, 'getDeliveries').mockReturnValue([])        // ……只换掉这一个方法
+  const sut = new CustomerController(calculator)
+
+  const result = sut.getStatistics(1)
+
+  expect(result).toBe('Total weight delivered: 0. Total cost: 0')
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.11–11.13 · 仓库 <code>code/Book/Chapter11/MockingClasses/MockingClasses.cs</code></p>
+
+<p>
+  为什么会想这么做？因为没法给控制器一个真的 <code>StatisticsCalculator</code>（它要访问不受管的进程外依赖），
+  可又不想把它整个换掉（里面有重要的计算逻辑）。于是「只换一半」。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 诊断</div>
+  <p>
+    <strong>「需要 Mock 一个具体类来保留它的一部分功能」，是违反单一职责原则的结果。</strong>
+    <code>StatisticsCalculator</code> 把两种不相干的职责揉在了一起：与不受管依赖通信，和计算统计数据。别 Mock 它，<strong>把它拆成两个类</strong>。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="重构前一个类同时负责取数据和计算，测试只能半真半假地 Mock 它。重构后拆成负责取数据的 DeliveryGateway 和负责计算的 StatisticsCalculator，前者用接口 Mock，后者用真的">
+  <text class="ttl on-r" x="170" y="22" text-anchor="middle">&#10007; 一个类，两种职责</text>
+  <rect class="bx" x="40" y="36" width="260" height="130" rx="12"/>
+  <text class="lbl" x="170" y="58" text-anchor="middle">StatisticsCalculator</text>
+  <rect class="bx-a" x="56" y="70" width="228" height="38" rx="6"/><text class="sm on-a" x="170" y="94" text-anchor="middle">calculate() —— 领域逻辑（要保留真的）</text>
+  <rect class="bx-d" x="56" y="116" width="228" height="38" rx="6"/><text class="sm" x="170" y="140" text-anchor="middle">getDeliveries() —— 外部通信（要替换）</text>
+  <text class="sm" x="170" y="190" text-anchor="middle">测试对象半真半假，很难说清到底测了什么</text>
+
+  <path class="ln-a" d="M316 100 H376" marker-end="url(#ar-a)"/>
+  <text class="sm on-a" x="346" y="90" text-anchor="middle">拆</text>
+
+  <text class="ttl on-g" x="565" y="22" text-anchor="middle">&#10003; 两个类，各管一件事</text>
+  <rect class="bx-a" x="390" y="40" width="170" height="64" rx="10"/>
+  <text class="lbl on-a" x="475" y="64" text-anchor="middle">StatisticsCalculator</text>
+  <text class="sm" x="475" y="84" text-anchor="middle">纯计算 &rarr; 测试里用真的</text>
+  <rect class="bx-b" x="580" y="40" width="166" height="64" rx="10"/>
+  <text class="lbl on-b" x="663" y="64" text-anchor="middle">IDeliveryGateway</text>
+  <text class="sm" x="663" y="84" text-anchor="middle">外部通信 &rarr; 测试里用替身</text>
+  <rect class="bx" x="470" y="140" width="196" height="40" rx="10"/><text class="lbl" x="568" y="165" text-anchor="middle">CustomerController</text>
+  <path class="ln" d="M530 138 L490 108" marker-end="url(#ar)"/>
+  <path class="ln" d="M606 138 L646 108" marker-end="url(#ar)"/>
+  <text class="sm" x="568" y="206" text-anchor="middle">这就是第 7 章的 Humble Object 模式</text>
+</svg>
+<figcaption>图 11-5　想「只 Mock 一半」时，说明这个类该一分为二了</figcaption>
+</figure>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✓ 拆成两个类"><pre>
+public interface IDeliveryGateway {
+    List&lt;DeliveryRecord&gt; getDeliveries(int customerId);
+}
+
+public class DeliveryGateway implements IDeliveryGateway {
+    public List&lt;DeliveryRecord&gt; getDeliveries(int customerId) {
+        /* 调用进程外依赖，取得配送记录 */
+    }
+}
+
+public class StatisticsCalculator {
+    public Statistics calculate(List&lt;DeliveryRecord&gt; records) {
+        double totalWeight = records.stream().mapToDouble(DeliveryRecord::weight).sum();
+        double totalCost = records.stream().mapToDouble(DeliveryRecord::cost).sum();
+        return new Statistics(totalWeight, totalCost);
+    }
+}
+
+public class CustomerController {
+    private final StatisticsCalculator calculator;
+    private final IDeliveryGateway gateway;
+
+    public CustomerController(StatisticsCalculator calculator, IDeliveryGateway gateway) {
+        this.calculator = calculator;                 // 两个独立的依赖
+        this.gateway = gateway;
+    }
+
+    public String getStatistics(int customerId) {
+        var records = gateway.getDeliveries(customerId);
+        Statistics s = calculator.calculate(records);
+        return "Total weight delivered: " + s.totalWeight() + ". Total cost: " + s.totalCost();
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✓ 拆成两个类"><pre>
+class DeliveryGateway:
+    def get_deliveries(self, customer_id: int) -&gt; list[DeliveryRecord]:
+        ...  # 调用进程外依赖，取得配送记录
+
+
+class StatisticsCalculator:
+    def calculate(self, records: list[DeliveryRecord]) -&gt; tuple[float, float]:
+        total_weight = sum(r.weight for r in records)
+        total_cost = sum(r.cost for r in records)
+        return total_weight, total_cost
+
+
+class CustomerController:
+    def __init__(self, calculator: StatisticsCalculator,
+                 gateway: DeliveryGateway) -&gt; None:
+        self._calculator = calculator                # 两个独立的依赖
+        self._gateway = gateway
+
+    def get_statistics(self, customer_id: int) -&gt; str:
+        records = self._gateway.get_deliveries(customer_id)
+        total_weight, total_cost = self._calculator.calculate(records)
+        return f"Total weight delivered: {total_weight}. Total cost: {total_cost}"
+</pre></div>
+<div class="code" data-lang="ts" data-file="✓ 拆成两个类"><pre>
+export interface IDeliveryGateway {
+  getDeliveries(customerId: number): DeliveryRecord[]
+}
+
+export class DeliveryGateway implements IDeliveryGateway {
+  getDeliveries(customerId: number): DeliveryRecord[] {
+    /* 调用进程外依赖，取得配送记录 */
+  }
+}
+
+export class StatisticsCalculator {
+  calculate(records: DeliveryRecord[]): { totalWeight: number; totalCost: number } {
+    const totalWeight = records.reduce((sum, r) =&gt; sum + r.weight, 0)
+    const totalCost = records.reduce((sum, r) =&gt; sum + r.cost, 0)
+    return { totalWeight, totalCost }
+  }
+}
+
+export class CustomerController {
+  constructor(
+    private readonly calculator: StatisticsCalculator,   // 两个独立的依赖
+    private readonly gateway: IDeliveryGateway,
+  ) {}
+
+  getStatistics(customerId: number): string {
+    const records = this.gateway.getDeliveries(customerId)
+    const { totalWeight, totalCost } = this.calculator.calculate(records)
+    return `Total weight delivered: ${totalWeight}. Total cost: ${totalCost}`
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.14 / 11.15</p>
+
+<p>
+  与不受管依赖通信的职责转移到了 <code>DeliveryGateway</code>，它背后有一个接口，可以用来 Mock。
+  而 <code>StatisticsCalculator</code> 现在是纯计算，可以直接用基于输出的方式做单元测试。
+</p>
+
+<h2 id="time">反模式六：把时间当作环境上下文</h2>
+
+<p>
+  很多功能需要当前日期和时间。测试依赖时间的功能容易出现误报：执行阶段取到的时间和断言阶段取到的可能不一样。
+  有三种稳定这个依赖的办法 —— 一种是反模式，另外两种里有一种更好。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="处理时间的三种方式：全局静态的环境上下文是反模式；把时间作为服务注入可以；把时间作为普通值传入最好">
+  <rect class="bx-r" x="14" y="16" width="236" height="198" rx="12"/>
+  <text class="ttl on-r" x="28" y="42">&#10007; 环境上下文</text>
+  <text class="mono sm" x="28" y="68">DateTimeServer.now()</text>
+  <text class="sm" x="28" y="92">一个可以被替换的全局静态时钟</text>
+  <text class="sm" x="28" y="122">· 污染生产代码</text>
+  <text class="sm" x="28" y="142">· 依赖是隐藏的</text>
+  <text class="sm" x="28" y="162">· 静态字段在测试之间共享</text>
+  <text class="sm" x="28" y="180">  &rarr; 测试不再相互隔离，</text>
+  <text class="sm" x="28" y="198">  滑向集成测试</text>
+
+  <rect class="bx" x="262" y="16" width="236" height="198" rx="12"/>
+  <text class="ttl" x="276" y="42">~ 作为服务注入</text>
+  <text class="mono sm" x="276" y="68">new Controller(clock)</text>
+  <text class="sm" x="276" y="92">通过构造函数传入一个时钟对象</text>
+  <text class="sm" x="276" y="122">· 依赖是显式的</text>
+  <text class="sm" x="276" y="142">· 测试里可以给一个固定的时钟</text>
+  <text class="sm" x="276" y="172">可以。适合放在业务操作的入口</text>
+  <text class="sm" x="276" y="190">（控制器）处</text>
+
+  <rect class="bx-g" x="510" y="16" width="236" height="198" rx="12"/>
+  <text class="ttl on-g" x="524" y="42">&#10003; 作为普通值传入</text>
+  <text class="mono sm" x="524" y="68">inquiry.approve(now)</text>
+  <text class="sm" x="524" y="92">直接把「现在几点」当参数传进去</text>
+  <text class="sm" x="524" y="122">· 生产代码里用起来最简单</text>
+  <text class="sm" x="524" y="142">· 测试里最容易构造</text>
+  <text class="sm" x="524" y="162">· 方法成了纯函数（第 6 章）</text>
+  <text class="sm on-g" x="524" y="192">首选。领域模型里都用这种</text>
+</svg>
+<figcaption>图 11-6　处理时间的三种方式</figcaption>
+</figure>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// ✗ 环境上下文
+public final class DateTimeServer {
+    private static Supplier&lt;LocalDateTime&gt; func;
+    public static LocalDateTime now() { return func.get(); }
+    public static void init(Supplier&lt;LocalDateTime&gt; f) { func = f; }
+}
+DateTimeServer.init(LocalDateTime::now);                          // 生产环境的初始化
+DateTimeServer.init(() -&gt; LocalDateTime.of(2020, 1, 1, 0, 0));    // 单元测试的初始化
+
+// ✓ 显式依赖：入口处注入服务，往下传值
+public class InquiryController {
+    private final Clock clock;                       // java.time.Clock 就是现成的「时间服务」
+
+    public InquiryController(Clock clock) {          // 把时间作为服务注入
+        this.clock = clock;
+    }
+
+    public void approveInquiry(int id) {
+        Inquiry inquiry = getById(id);
+        inquiry.approve(LocalDateTime.now(clock));   // 把时间作为普通值传给领域类
+        saveInquiry(inquiry);
+    }
+}
+
+// 测试领域类时直接给一个值
+inquiry.approve(LocalDateTime.of(2020, 1, 1, 0, 0));
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# ✗ 环境上下文
+class DateTimeServer:
+    _func: Callable[[], datetime]
+
+    @classmethod
+    def now(cls) -&gt; datetime:
+        return cls._func()
+
+    @classmethod
+    def init(cls, func: Callable[[], datetime]) -&gt; None:
+        cls._func = func
+
+DateTimeServer.init(datetime.now)                     # 生产环境的初始化
+DateTimeServer.init(lambda: datetime(2020, 1, 1))     # 单元测试的初始化
+
+
+# ✓ 显式依赖：入口处注入服务，往下传值
+class InquiryController:
+    def __init__(self, clock: Callable[[], datetime]) -&gt; None:   # 把时间作为服务注入
+        self._clock = clock
+
+    def approve_inquiry(self, inquiry_id: int) -&gt; None:
+        inquiry = self._get_by_id(inquiry_id)
+        inquiry.approve(self._clock())                # 把时间作为普通值传给领域类
+        self._save_inquiry(inquiry)
+
+
+# 测试领域类时直接给一个值
+inquiry.approve(datetime(2020, 1, 1))
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// ✗ 环境上下文
+export class DateTimeServer {
+  private static func: () =&gt; Date
+  static get now(): Date { return this.func() }
+  static init(func: () =&gt; Date): void { this.func = func }
+}
+DateTimeServer.init(() =&gt; new Date())                 // 生产环境的初始化
+DateTimeServer.init(() =&gt; new Date(2020, 0, 1))       // 单元测试的初始化
+
+// ✓ 显式依赖：入口处注入服务，往下传值
+export interface IClock { now(): Date }
+
+export class InquiryController {
+  constructor(private readonly clock: IClock) {}      // 把时间作为服务注入
+
+  approveInquiry(id: number): void {
+    const inquiry = this.getById(id)
+    inquiry.approve(this.clock.now())                 // 把时间作为普通值传给领域类
+    this.saveInquiry(inquiry)
+  }
+}
+
+// 测试领域类时直接给一个值
+inquiry.approve(new Date(2020, 0, 1))
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 11.16 / 11.17 · 仓库 <code>code/Book/Chapter11/Time/Ambient.cs</code>、<code>DI.cs</code></p>
+
+<div class="box tip">
+  <div class="t">&#128161; 一个好的折中</div>
+  <p>
+    你不一定总能把时间作为普通值注入，因为依赖注入框架和值对象配合得不太好。
+    折中做法是：<strong>在业务操作的起点把时间作为服务注入，然后在这次操作的剩余部分把它当作值往下传。</strong>
+    上面的例子就是这样：控制器接收时钟服务，但传给领域类 <code>Inquiry</code> 的是一个时间值。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 那用框架「冻结时间」呢？</div>
+  <p>
+    各语言都有在测试里替换全局时钟的工具（Python 的 <code>freezegun</code>、Vitest 的 <code>vi.useFakeTimers()</code> 等）。
+    它们本质上就是一种环境上下文：能解一时之急（比如测不好改的遗留代码），但依赖仍然是隐藏的。
+    对于你能掌控的代码，把时间显式传进去更干净，测试也不需要任何「魔法」。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>为了测试而公开私有方法，会让测试和实现耦合，损害抵抗重构。<strong>通过可观察行为间接地测私有方法。</strong></li>
+  <li>如果私有方法复杂到没法通过使用它的公开 API 来测，说明<strong>缺少一个抽象</strong>。把它抽成独立的类，而不是把私有方法改成公开的。</li>
+  <li>极少数情况下，私有方法确实属于类的可观察行为 —— 通常是实现了类与 ORM 或工厂之间的非公开契约。</li>
+  <li><strong>不要仅仅为了单元测试而暴露本该私有的状态。</strong>测试与被测系统交互的方式应该和生产代码完全一样，不该有任何特权。</li>
+  <li><strong>写测试时不要暗示任何特定的实现。</strong>从黑盒视角验证生产代码，避免把领域知识泄漏到测试里；把期望结果写死。</li>
+  <li><strong>代码污染</strong>是在生产代码里添加只有测试才需要的代码。它把测试代码和生产代码混在一起，抬高了后者的维护成本。</li>
+  <li>需要 Mock 具体类来保留其部分功能，是违反单一职责原则的结果。<strong>把那个类拆成两个</strong>：一个放领域逻辑，另一个负责与进程外依赖通信。</li>
+  <li>把当前时间表示成环境上下文会污染生产代码、让测试更难。<strong>把时间作为显式依赖注入</strong> —— 服务或普通值，能用普通值就用普通值。</li>
+</ul>
+
+<h2 id="recap">全书回顾</h2>
+
+<p>读到这里，你已经走完了整本书。把最核心的几条主线再串一遍：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="全书主线回顾：目标是可持续增长，标尺是四大支柱，其中抵抗重构不可妥协，因此只测可观察行为；为了让代码可测，把业务逻辑和编排分开；单元测试覆盖领域模型，集成测试覆盖控制器，受管依赖用真的，不受管依赖用 Mock">
+  <rect class="bx-a" x="250" y="10" width="260" height="46" rx="10"/>
+  <text class="ttl on-a" x="380" y="30" text-anchor="middle">目标：让项目可持续地增长</text>
+  <text class="sm" x="380" y="47" text-anchor="middle">第 1 章</text>
+  <path class="ln" d="M380 58 V72" marker-end="url(#ar)"/>
+
+  <rect class="bx" x="170" y="76" width="420" height="50" rx="10"/>
+  <text class="ttl" x="380" y="98" text-anchor="middle">标尺：防止回归 &times; 抵抗重构 &times; 快速反馈 &times; 可维护性</text>
+  <text class="sm" x="380" y="115" text-anchor="middle">第 4 章 · 抵抗重构没得商量</text>
+  <path class="ln" d="M300 128 L180 150" marker-end="url(#ar)"/>
+  <path class="ln" d="M460 128 L580 150" marker-end="url(#ar)"/>
+
+  <rect class="bx-b" x="20" y="154" width="340" height="68" rx="10"/>
+  <text class="ttl on-b" x="36" y="176">测什么：只测可观察行为</text>
+  <text class="sm" x="36" y="194">不测实现细节；测试像黑盒、像审计员</text>
+  <text class="sm" x="36" y="210">第 2、5、6、11 章</text>
+
+  <rect class="bx-g" x="400" y="154" width="340" height="68" rx="10"/>
+  <text class="ttl on-g" x="416" y="176">怎么让代码可测：分开「逻辑」和「编排」</text>
+  <text class="sm" x="416" y="194">代码要么深要么宽；Humble Object、领域事件</text>
+  <text class="sm" x="416" y="210">第 6、7 章</text>
+
+  <path class="ln" d="M190 224 V246" marker-end="url(#ar)"/>
+  <path class="ln" d="M570 224 V246" marker-end="url(#ar)"/>
+
+  <rect class="bx" x="20" y="250" width="340" height="68" rx="10"/>
+  <text class="ttl" x="36" y="272">单元测试 &rarr; 领域模型与算法</text>
+  <text class="sm" x="36" y="290">数量多；优先基于输出，其次基于状态；不用 Mock</text>
+  <text class="sm" x="36" y="306">第 3、6、7 章</text>
+
+  <rect class="bx" x="400" y="250" width="340" height="68" rx="10"/>
+  <text class="ttl" x="416" y="272">集成测试 &rarr; 控制器</text>
+  <text class="sm" x="416" y="290">数量少；受管依赖用真的，不受管依赖在边缘 Mock</text>
+  <text class="sm" x="416" y="306">第 8、9、10 章</text>
+</svg>
+<figcaption>图 11-7　一张图回顾全书</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#128161; 接下来怎么用</div>
+  <p>
+    一下子应用所有准则可能让人不知所措，现实情况也未必像书里的例子那么干净。不妨从小处开始：
+    下次写测试或评审别人的测试时，只问一个问题 ——
+    <strong>「如果我重构这段代码但不改变它的行为，这个测试会红吗？」</strong>
+    会的话，想想它绑在了什么实现细节上。这一个问题，就能把你带到书里大部分结论那里去。
+  </p>
+</div>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>团队规定「覆盖率必须 90%」，于是有人用反射去调私有方法来补覆盖率。问题出在哪？更好的做法是什么？</summary>
+  <p>两个问题：把覆盖率当成了目标（第 1 章）；测私有方法让测试和实现细节耦合。更好的做法是看那些没被覆盖的私有方法 —— 要么是死代码（删掉），要么藏着一个该抽出来的抽象（抽成独立的类再测）。</p>
+</details>
+<details class="quiz">
+  <summary>测试里有这样一行：<code>expected = price * (1 - discountRate) * (1 + taxRate)</code>，然后和 SUT 的返回值比较。这是哪个反模式？</summary>
+  <p>向测试泄漏领域知识。测试重复了生产代码的计算公式。应该把具体输入对应的结果预先算好、写死在测试里，比如 <code>(100, 0.1, 0.2) → 108</code>。</p>
+</details>
+<details class="quiz">
+  <summary>代码里到处是 <code>if (Environment.isTest()) { … }</code>。这是什么？怎么改？</summary>
+  <p>代码污染。把因环境而异的行为抽到接口后面，生产环境注入真实实现，测试注入假实现；生产代码里不再需要知道「自己是不是在测试里」。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>在你的项目里搜索被放宽了可见性的方法 / 字段（Java 的包级可见加 <code>@VisibleForTesting</code>、Python 里测试直接访问 <code>_private</code>、TS 里的 <code>as any</code>）。挑一个，改成通过可观察行为来测。</li>
+    <li>搜索测试里的 <code>spy()</code> / <code>patch.object</code> / <code>vi.spyOn</code> 用在被测类自身上的地方。被测类是不是承担了两种职责？试着拆开。</li>
+    <li>找一个直接调用 <code>now()</code> 的领域方法，把时间改成参数传入，然后给它写一个不需要「冻结时间」的测试。</li>
+    <li>回到第 4 章的练习：重新给你项目里的五个测试按四大支柱打分。和你读这本书之前打的分相比，有什么不同？</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

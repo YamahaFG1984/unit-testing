@@ -1,0 +1,1441 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 10 章 · 测试数据库 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="10">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 10 章</span>
+<h1>测试数据库</h1>
+<p class="lede">
+  上一章解决了不受管依赖（Mock），这一章解决集成测试的最后一块拼图：受管依赖，也就是应用自己的数据库。
+  用真数据库跑测试能提供近乎无懈可击的保护，但搭起来不容易。我们从「开始写测试之前要先做好什么」讲起，再讲事务、测试数据的清理，以及怎么让集成测试保持短小。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>做好测试数据库的三项准备：<strong>结构进版本库、每人一个实例、用迁移交付</strong></li>
+    <li>在生产代码里正确管理事务（仓储 + 事务 / 工作单元）</li>
+    <li>在测试里<strong>每一段用独立的事务</strong></li>
+    <li>知道测试数据该<strong>在什么时候清理</strong>，以及为什么别用内存数据库</li>
+    <li>用工厂方法、装饰方法、流式断言把集成测试缩短</li>
+    <li>回答两个常见问题：读操作要不要测？仓储要不要单独测？</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<div class="box note">
+  <div class="t">&#9432; 适用范围</div>
+  <p>本章以关系型数据库为例，但其中很多原则也适用于文档数据库，甚至纯文本文件存储。</p>
+</div>
+
+<h2 id="prereq">测试数据库的前提条件</h2>
+
+<p>
+  受管依赖在集成测试里要用真的，这比不受管依赖费事 —— 没法 Mock 了。动手写测试之前，先要把三件事准备好。
+  和测试里的几乎所有事情一样，<strong>这些做法即使不写集成测试也对你的数据库有好处</strong>。
+</p>
+
+<h3>① 把数据库放进版本控制</h3>
+
+<p>
+  第一步是把数据库结构当成普通代码来对待，存进 Git。有些团队的做法是维护一个专门的数据库实例作为参照（「模型数据库」）：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="反模式：程序员直接修改一个模型数据库，发布时用比对工具对比模型库和生产库，生成升级脚本后应用到生产库">
+  <text class="ttl on-r" x="20" y="24">&#10007; 反模式：用一个「模型数据库」实例当参照</text>
+  <rect class="bx" x="20" y="60" width="130" height="50" rx="8"/><text class="lbl" x="85" y="82" text-anchor="middle">程序员们</text><text class="sm" x="85" y="100" text-anchor="middle">直接改</text>
+  <path class="ln" d="M152 85 H206" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="210" y="50" width="140" height="70" rx="10"/><text class="ttl on-r" x="280" y="82" text-anchor="middle">模型数据库</text><text class="sm" x="280" y="102" text-anchor="middle">所有改动堆在这</text>
+  <rect class="bx" x="580" y="50" width="140" height="70" rx="10"/><text class="ttl" x="650" y="90" text-anchor="middle">生产数据库</text>
+  <rect class="bx-d" x="400" y="140" width="130" height="50" rx="8"/><text class="lbl" x="465" y="162" text-anchor="middle">比对工具</text><text class="sm" x="465" y="180" text-anchor="middle">生成升级脚本</text>
+  <path class="ln" d="M352 85 H576" marker-end="url(#ar)" marker-start="url(#ar)"/>
+  <text class="sm" x="465" y="76" text-anchor="middle">发布时比对</text>
+  <path class="ln-d" d="M465 90 V136"/>
+  <path class="ln" d="M532 165 H650 V124" marker-end="url(#ar)"/>
+  <text class="sm" x="600" y="158" text-anchor="middle">应用</text>
+
+  <rect class="bx-r" x="20" y="150" width="340" height="74" rx="10"/>
+  <text class="lbl on-r" x="34" y="172">两个问题</text>
+  <text class="sm" x="34" y="192">没有变更历史：没法回到过去某个时间点去复现 Bug</text>
+  <text class="sm" x="34" y="210">没有唯一事实来源：Git 和模型库两套「真相」互相竞争</text>
+</svg>
+<figcaption>图 10-1　用专门的实例当参照是反模式。数据库结构应该放进版本控制系统</figcaption>
+</figure>
+
+<p>
+  把所有数据库结构的变更放进版本控制，你就有了<strong>唯一的事实来源</strong>，还能让数据库的变化和代码的变化一起被追踪。
+  <strong>任何对数据库结构的修改都不应该绕过版本控制。</strong>
+</p>
+
+<h3>参考数据也是数据库结构的一部分</h3>
+
+<p>
+  说到「结构」，大家想到的是表、视图、索引、存储过程 —— 这些以 SQL 脚本的形式存在，任何时候都能用它们建出一个功能完整的、最新的数据库。
+  但还有一样东西属于结构却常被忽视：
+</p>
+
+<div class="term">
+  <b class="w">参考数据（reference data）</b>
+  <p>
+    为了让应用正常工作而<strong>必须预先填好</strong>的数据。比如 CRM 里建一张 <code>UserType</code> 表存放所有用户类型（客户、员工），
+    <code>User</code> 表通过外键引用它 —— 那么 <code>UserType</code> 表的内容就是参考数据，没有它用户根本存不进去。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#128161; 怎么区分参考数据和普通数据</div>
+  <p>
+    <strong>应用能修改的</strong>，是普通数据；<strong>应用不能修改的</strong>，是参考数据。
+    参考数据要和表、视图一起，以 <code>INSERT</code> 语句的形式放进版本控制。
+  </p>
+</div>
+
+<h3>② 每个开发者一个独立的实例</h3>
+
+<p>
+  对着真数据库跑测试已经够难了，如果还得和别人共用一个库就更难：不同开发者跑的测试会互相干扰；
+  不向后兼容的改动会卡住别人的工作。<strong>给每个开发者一个独立的数据库实例，最好就在他自己的机器上</strong>，这样测试跑得最快。
+</p>
+
+<h3>③ 基于状态 vs. 基于迁移的数据库交付</h3>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>基于状态（state-based）</th><th>基于迁移（migration-based）</th></tr>
+  <tr><td><strong>版本库里存什么</strong></td><td>描述数据库<strong>当前应有状态</strong>的 SQL 脚本</td><td>一个个把数据库从一个版本变到下一个版本的<strong>迁移脚本</strong></td></tr>
+  <tr><td><strong>数据库的状态</strong></td><td style="color:var(--green);font-weight:700">显式</td><td>隐式（要把迁移依次叠起来才知道）</td></tr>
+  <tr><td><strong>迁移的过程</strong></td><td>隐式（由比对工具自动生成）</td><td style="color:var(--green);font-weight:700">显式（你自己写）</td></tr>
+  <tr><td><strong>擅长</strong></td><td>处理合并冲突</td><td>处理<strong>数据迁移</strong></td></tr>
+</table>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="基于迁移的交付：一串显式的迁移脚本依次把数据库从一个版本变到下一个版本">
+  <rect class="bx" x="20" y="40" width="200" height="80" rx="10"/>
+  <text class="ttl" x="120" y="64" text-anchor="middle">迁移 1</text>
+  <text class="mono sm" x="120" y="88" text-anchor="middle">CREATE TABLE</text>
+  <text class="mono sm" x="120" y="104" text-anchor="middle">Customer (…)</text>
+  <path class="ln-a" d="M222 80 H276" marker-end="url(#ar-a)"/>
+  <rect class="bx" x="280" y="40" width="200" height="80" rx="10"/>
+  <text class="ttl" x="380" y="64" text-anchor="middle">迁移 2</text>
+  <text class="mono sm" x="380" y="88" text-anchor="middle">ALTER TABLE</text>
+  <text class="mono sm" x="380" y="104" text-anchor="middle">Customer (…)</text>
+  <path class="ln-a" d="M482 80 H536" marker-end="url(#ar-a)"/>
+  <rect class="bx" x="540" y="40" width="200" height="80" rx="10"/>
+  <text class="ttl" x="640" y="64" text-anchor="middle">迁移 3</text>
+  <text class="mono sm" x="640" y="88" text-anchor="middle">CREATE TABLE</text>
+  <text class="mono sm" x="640" y="104" text-anchor="middle">User (…)</text>
+  <text class="sm" x="120" y="144" text-anchor="middle">版本 0 &rarr; 1</text>
+  <text class="sm" x="380" y="144" text-anchor="middle">版本 1 &rarr; 2</text>
+  <text class="sm" x="640" y="144" text-anchor="middle">版本 2 &rarr; 3</text>
+  <text class="lbl" x="380" y="180" text-anchor="middle">任何一个数据库实例（生产、测试、你的笔记本）都靠「依次执行还没执行过的迁移」来升级</text>
+</svg>
+<figcaption>图 10-2　基于迁移的交付：存进版本库的是「怎么变」，而不是「变成什么样」</figcaption>
+</figure>
+
+<p>迁移通常就是普通的 SQL 脚本，也可以用各语言的迁移工具提供的 DSL 来写：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="Flyway：src/main/resources/db/migration/V1__Create_users_table.sql"><pre>
+-- Flyway 用文件名里的版本号（V1、V2…）决定执行顺序。
+-- 迁移内容就是普通 SQL：
+CREATE TABLE users (
+    user_id            BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    email              VARCHAR(256) NOT NULL,
+    type               INT NOT NULL,
+    is_email_confirmed BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+-- 也可以用 Java 写（继承 BaseJavaMigration），或换用 Liquibase
+</pre></div>
+<div class="code" data-lang="python" data-file="Alembic：versions/0001_create_users_table.py"><pre>
+import sqlalchemy as sa
+from alembic import op
+
+revision = "0001"          # 迁移编号
+down_revision = None
+
+
+def upgrade() -&gt; None:     # 正向迁移
+    op.create_table(
+        "users",
+        sa.Column("user_id", sa.BigInteger, primary_key=True),
+        sa.Column("email", sa.String(256), nullable=False),
+        sa.Column("type", sa.Integer, nullable=False),
+        sa.Column("is_email_confirmed", sa.Boolean, nullable=False, server_default=sa.false()),
+    )
+
+
+def downgrade() -&gt; None:   # 反向迁移（回退到旧版本复现 Bug 时有用）
+    op.drop_table("users")
+</pre></div>
+<div class="code" data-lang="ts" data-file="Knex：migrations/0001_create_users_table.ts"><pre>
+import type { Knex } from 'knex'
+
+export async function up(knex: Knex): Promise&lt;void&gt; {     // 正向迁移
+  await knex.schema.createTable('users', (t) =&gt; {
+    t.bigIncrements('user_id').primary()
+    t.string('email', 256).notNullable()
+    t.integer('type').notNullable()
+    t.boolean('is_email_confirmed').notNullable().defaultTo(false)
+  })
+}
+
+export async function down(knex: Knex): Promise&lt;void&gt; {   // 反向迁移（回退到旧版本复现 Bug 时有用）
+  await knex.schema.dropTable('users')
+}
+</pre></div>
+</div>
+<p class="src">对应原书 10.1.4 节的 FluentMigrator 示例 · 仓库 <code>code/Book/Chapter10/Migrations/Migrations.cs</code>、<code>code/DatabaseGenerationScript.sql</code></p>
+
+<h3>为什么选基于迁移</h3>
+
+<div class="term">
+  <b class="w">数据迁移（data motion）</b>
+  <p>改变<strong>现有数据</strong>的形态，使其符合新的数据库结构的过程。</p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="把 Name 列拆成 FirstName 和 LastName 的例子。比对工具只能删列建列，无法知道怎样把现有姓名拆成两部分；只有人写的迁移脚本能表达这个规则">
+  <rect class="bx" x="20" y="30" width="200" height="110" rx="10"/>
+  <text class="ttl" x="120" y="54" text-anchor="middle">改之前</text>
+  <text class="mono sm" x="36" y="80">Name</text>
+  <path class="ln" d="M36 88 H204"/>
+  <text class="mono sm" x="36" y="108">"John Smith"</text>
+  <text class="mono sm" x="36" y="128">"Mary Jane Watson"</text>
+
+  <path class="ln-a" d="M222 85 H316" marker-end="url(#ar-a)"/>
+  <text class="sm on-a" x="269" y="76" text-anchor="middle">怎么拆？</text>
+
+  <rect class="bx" x="320" y="30" width="230" height="110" rx="10"/>
+  <text class="ttl" x="435" y="54" text-anchor="middle">改之后</text>
+  <text class="mono sm" x="336" y="80">FirstName</text><text class="mono sm" x="450" y="80">LastName</text>
+  <path class="ln" d="M336 88 H534"/>
+  <text class="mono sm" x="336" y="108">"John"</text><text class="mono sm" x="450" y="108">"Smith"</text>
+  <text class="mono sm" x="336" y="128">"Mary Jane"?</text><text class="mono sm" x="450" y="128">"Watson"?</text>
+
+  <rect class="bx-r" x="570" y="24" width="176" height="56" rx="8"/>
+  <text class="sm on-r" x="582" y="44">比对工具：只会「删一列、</text>
+  <text class="sm on-r" x="582" y="62">加两列」，数据丢了</text>
+  <rect class="bx-g" x="570" y="90" width="176" height="56" rx="8"/>
+  <text class="sm on-g" x="582" y="110">手写迁移：你来写规则，</text>
+  <text class="sm on-g" x="582" y="128">把每个名字拆成两段</text>
+  <text class="sm" x="380" y="178" text-anchor="middle">结构是客观的，只有一种解读；数据却依赖上下文 —— 没有工具能对你的数据做出可靠的假设</text>
+</svg>
+<figcaption>图 10-3　数据迁移是基于状态的做法处理不了的</figcaption>
+</figure>
+
+<p>
+  「好处理合并冲突」和「好处理数据迁移」看起来差不多重要，但在绝大多数项目里，<strong>数据迁移重要得多</strong>：
+  只要应用已经上过生产，你手里就总有不能随便丢弃的数据。所以基于状态的做法在大多数项目里不实用 ——
+  最多在项目还没发布时临时用用（那时测试数据不重要，改一次库重建一次就行），发布第一个版本后就得切到基于迁移。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 迁移的规矩</div>
+  <ul>
+    <li>对数据库结构的<strong>每一次</strong>修改（包括参考数据）都通过迁移来做。</li>
+    <li>迁移一旦提交到版本库，就<strong>不要再改</strong>。迁移写错了？新建一个迁移来修正，而不是改旧的。</li>
+    <li>唯一的例外：错误的迁移会导致数据丢失时。</li>
+  </ul>
+</div>
+
+<h2 id="transactions">数据库事务管理</h2>
+
+<p>事务管理对生产代码和测试代码都很重要：在生产代码里它防止数据不一致；在测试里它帮你在接近生产的环境下验证与数据库的集成。</p>
+
+<h3>生产代码里的事务</h3>
+
+<p>
+  到目前为止，CRM 的 <code>Database</code> 类在每次方法调用时都新开一个连接，每个连接背后隐式地开一个独立的事务。
+  于是控制器在一次业务操作里总共开了<strong>四个事务</strong>：读用户、读公司、存公司、存用户。
+</p>
+<p>
+  只读操作开多个事务没问题。但<strong>如果业务操作要改数据，这次操作里的所有更新必须是原子的</strong>。
+  否则可能出现：公司存成功了，存用户时数据库连接断了 —— 公司的员工数和库里实际的员工用户数对不上了。
+</p>
+
+<div class="term">
+  <b class="w">原子更新（atomic updates）</b>
+  <p>以「全有或全无」的方式执行：一组更新要么全部完成，要么一点效果都不留下。</p>
+</div>
+
+<p>要避免不一致，需要把两种决定分开：</p>
+<ul>
+  <li><strong>更新哪些数据</strong> &rarr; 交给<strong>仓储</strong>（Repository）：负责访问和修改数据库里的数据。示例里有两个：<code>UserRepository</code> 和 <code>CompanyRepository</code>。</li>
+  <li><strong>这些更新是保留还是回滚</strong> &rarr; 交给<strong>事务</strong>（Transaction）：把数据更新整体提交或整体回滚。</li>
+</ul>
+<p>
+  之所以要分开，是因为控制器没法同时做这两个决定：只有业务操作的所有步骤都成功了，它才知道更新能不能保留；
+  而要走完这些步骤，它又必须先访问数据库、尝试更新。两者的<strong>生命周期</strong>也不同：事务贯穿整个业务操作；仓储是短命的，一次数据库调用结束就可以丢弃。
+  所以仓储总是工作在当前事务之上。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 280" role="img" aria-label="左图：每次数据库调用各自一个事务，如果存公司成功而存用户失败，数据就不一致。右图：引入显式事务后，所有调用在同一个事务内，最后统一提交或回滚">
+  <text class="ttl on-r" x="185" y="22" text-anchor="middle">&#10007; 每次调用各开一个事务</text>
+  <rect class="bx" x="20" y="40" width="90" height="200" rx="8"/><text class="lbl" x="65" y="144" text-anchor="middle">控制器</text>
+  <rect class="bx" x="260" y="40" width="90" height="200" rx="8"/><text class="lbl" x="305" y="144" text-anchor="middle">数据库</text>
+  <path class="ln" d="M112 70 H256" marker-end="url(#ar)"/><text class="mono sm" x="184" y="64" text-anchor="middle">getUserById</text>
+  <path class="ln" d="M112 116 H256" marker-end="url(#ar)"/><text class="mono sm" x="184" y="110" text-anchor="middle">getCompany</text>
+  <path class="ln-g" d="M112 162 H256" marker-end="url(#ar-g)"/><text class="mono sm on-g" x="184" y="156" text-anchor="middle">saveCompany ✓</text>
+  <path class="ln-r" d="M112 208 H256" marker-end="url(#ar-r)" style="stroke-dasharray:5 4"/><text class="mono sm on-r" x="184" y="202" text-anchor="middle">saveUser ✗ 断线</text>
+  <text class="sm on-r" x="185" y="264" text-anchor="middle">员工数改了，用户却没改 &rarr; 数据不一致</text>
+
+  <path class="ln" d="M380 20 V260" style="stroke-dasharray:2 5"/>
+
+  <text class="ttl on-g" x="575" y="22" text-anchor="middle">&#10003; 一个显式事务包住全部</text>
+  <rect class="bx" x="400" y="40" width="80" height="200" rx="8"/><text class="lbl" x="440" y="144" text-anchor="middle">控制器</text>
+  <rect class="bx-a" x="530" y="40" width="80" height="200" rx="8"/><text class="lbl on-a" x="570" y="144" text-anchor="middle">事务</text>
+  <rect class="bx" x="660" y="40" width="80" height="200" rx="8"/><text class="lbl" x="700" y="144" text-anchor="middle">数据库</text>
+  <path class="ln-a" d="M612 58 H656" marker-end="url(#ar-a)"/><text class="sm on-a" x="634" y="52" text-anchor="middle">开启</text>
+  <path class="ln" d="M482 86 H526" marker-end="url(#ar)"/><path class="ln" d="M612 86 H656" marker-end="url(#ar)"/>
+  <path class="ln" d="M482 114 H526" marker-end="url(#ar)"/><path class="ln" d="M612 114 H656" marker-end="url(#ar)"/>
+  <path class="ln" d="M482 142 H526" marker-end="url(#ar)"/><path class="ln" d="M612 142 H656" marker-end="url(#ar)"/>
+  <path class="ln" d="M482 170 H526" marker-end="url(#ar)"/><path class="ln" d="M612 170 H656" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M482 216 H526" marker-end="url(#ar-g)"/><path class="ln-g" d="M612 216 H656" marker-end="url(#ar-g)"/>
+  <text class="sm" x="504" y="76" text-anchor="middle">四次调用</text>
+  <text class="sm on-g" x="504" y="234" text-anchor="middle">commit</text>
+  <text class="sm on-g" x="575" y="264" text-anchor="middle">要么四步全生效，要么全部回滚</text>
+</svg>
+<figcaption>图 10-4　事务在控制器和数据库之间居中调度，让数据修改变成原子的</figcaption>
+</figure>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class UserController {
+    private final Transaction transaction;
+    private final UserRepository userRepository;
+    private final CompanyRepository companyRepository;
+    private final EventDispatcher eventDispatcher;
+
+    public UserController(Transaction transaction,                // 接收一个事务
+                          MessageBus messageBus, IDomainLogger domainLogger) {
+        this.transaction = transaction;
+        this.userRepository = new UserRepository(transaction);    // 仓储建立在事务之上
+        this.companyRepository = new CompanyRepository(transaction);
+        this.eventDispatcher = new EventDispatcher(messageBus, domainLogger);
+    }
+
+    public String changeEmail(int userId, String newEmail) {
+        Object[] userData = userRepository.getUserById(userId);
+        User user = UserFactory.create(userData);
+
+        String error = user.canChangeEmail();
+        if (error != null) return error;                          // 提前返回 → 没有 commit → 回滚
+
+        Object[] companyData = companyRepository.getCompany();
+        Company company = CompanyFactory.create(companyData);
+
+        user.changeEmail(newEmail, company);
+
+        companyRepository.saveCompany(company);
+        userRepository.saveUser(user);
+        eventDispatcher.dispatch(user.getDomainEvents());
+
+        transaction.commit();                                     // 只有成功走到最后才提交
+        return "OK";
+    }
+}
+
+public class Transaction implements AutoCloseable {
+    public void commit() { /* 标记为成功 */ }
+
+    @Override
+    public void close() { /* 结束事务：commit 过就持久化，否则回滚 */ }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class UserController:
+    def __init__(self, transaction: Transaction,                  # 接收一个事务
+                 message_bus: MessageBus, domain_logger: DomainLogger) -&gt; None:
+        self._transaction = transaction
+        self._user_repository = UserRepository(transaction)       # 仓储建立在事务之上
+        self._company_repository = CompanyRepository(transaction)
+        self._event_dispatcher = EventDispatcher(message_bus, domain_logger)
+
+    def change_email(self, user_id: int, new_email: str) -&gt; str:
+        user_data = self._user_repository.get_user_by_id(user_id)
+        user = UserFactory.create(user_data)
+
+        error = user.can_change_email()
+        if error is not None:
+            return error                                          # 提前返回 → 没有 commit → 回滚
+
+        company_data = self._company_repository.get_company()
+        company = CompanyFactory.create(company_data)
+
+        user.change_email(new_email, company)
+
+        self._company_repository.save_company(company)
+        self._user_repository.save_user(user)
+        self._event_dispatcher.dispatch(user.domain_events)
+
+        self._transaction.commit()                                # 只有成功走到最后才提交
+        return "OK"
+
+
+class Transaction:
+    def commit(self) -&gt; None: ...     # 标记为成功
+
+    def __enter__(self): return self
+
+    def __exit__(self, *exc) -&gt; None: ...   # 结束事务：commit 过就持久化，否则回滚
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class UserController {
+  private readonly userRepository: UserRepository
+  private readonly companyRepository: CompanyRepository
+  private readonly eventDispatcher: EventDispatcher
+
+  constructor(
+    private readonly transaction: Transaction,                    // 接收一个事务
+    messageBus: MessageBus,
+    domainLogger: IDomainLogger,
+  ) {
+    this.userRepository = new UserRepository(transaction)         // 仓储建立在事务之上
+    this.companyRepository = new CompanyRepository(transaction)
+    this.eventDispatcher = new EventDispatcher(messageBus, domainLogger)
+  }
+
+  async changeEmail(userId: number, newEmail: string): Promise&lt;string&gt; {
+    const userData = await this.userRepository.getUserById(userId)
+    const user = UserFactory.create(userData)
+
+    const error = user.canChangeEmail()
+    if (error !== null) return error                              // 提前返回 → 没有 commit → 回滚
+
+    const companyData = await this.companyRepository.getCompany()
+    const company = CompanyFactory.create(companyData)
+
+    user.changeEmail(newEmail, company)
+
+    await this.companyRepository.saveCompany(company)
+    await this.userRepository.saveUser(user)
+    this.eventDispatcher.dispatch(user.domainEvents)
+
+    await this.transaction.commit()                               // 只有成功走到最后才提交
+    return 'OK'
+  }
+}
+
+export class Transaction {
+  async commit(): Promise&lt;void&gt; { /* 标记为成功 */ }
+  async dispose(): Promise&lt;void&gt; { /* 结束事务：commit 过就持久化，否则回滚 */ }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 10.3 · 仓库 <code>code/Book/Chapter10/Transaction/Transaction.cs</code></p>
+
+<p><code>Transaction</code> 有两个方法，配合起来保证<strong>只有快乐路径才会改动数据库</strong>：</p>
+<ul>
+  <li><code>commit()</code>：把事务标记为成功。只在业务操作成功、所有修改都准备好持久化时调用 —— 所以它在 <code>changeEmail()</code> 的<strong>最后</strong>。任何错误（校验失败或未处理的异常）都会让流程提前返回，事务也就不会被提交。</li>
+  <li><code>close()</code> / <code>dispose()</code>：结束事务，业务操作结束时<strong>无条件</strong>调用。之前 <code>commit()</code> 过就持久化，否则回滚。</li>
+</ul>
+<p>
+  调 <code>commit()</code> 需要做决定，所以由控制器来调；调 <code>close()</code> 不需要做决定，可以交给基础设施层 ——
+  也就是创建控制器并给它提供依赖的那个类（Web 框架的请求管道、依赖注入容器等）。
+</p>
+
+<h3>把事务升级为工作单元</h3>
+
+<div class="term">
+  <b class="w">工作单元（unit of work）</b>
+  <p>
+    维护一份「本次业务操作影响到的对象」的清单。操作完成时，工作单元算出需要对数据库做哪些更新，并把它们<strong>作为一个整体</strong>执行。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="工作单元模式：读取立即发往数据库，但保存操作只是被工作单元记下，直到最后调用 saveChanges 才把所有更新一次性发往数据库">
+  <rect class="bx" x="20" y="30" width="100" height="190" rx="8"/><text class="lbl" x="70" y="130" text-anchor="middle">控制器</text>
+  <rect class="bx-a" x="300" y="30" width="130" height="190" rx="8"/><text class="lbl on-a" x="365" y="122" text-anchor="middle">工作单元</text><text class="sm" x="365" y="142" text-anchor="middle">记下谁被改了</text>
+  <rect class="bx" x="630" y="30" width="110" height="190" rx="8"/><text class="lbl" x="685" y="130" text-anchor="middle">数据库</text>
+
+  <path class="ln" d="M122 56 H296" marker-end="url(#ar)"/><text class="mono sm" x="209" y="50" text-anchor="middle">getUserById</text>
+  <path class="ln" d="M432 56 H626" marker-end="url(#ar)"/>
+  <path class="ln" d="M122 88 H296" marker-end="url(#ar)"/><text class="mono sm" x="209" y="82" text-anchor="middle">getCompany</text>
+  <path class="ln" d="M432 88 H626" marker-end="url(#ar)"/>
+  <path class="ln" d="M122 126 H296" marker-end="url(#ar)"/><text class="mono sm" x="209" y="120" text-anchor="middle">saveCompany</text>
+  <path class="ln" d="M122 158 H296" marker-end="url(#ar)"/><text class="mono sm" x="209" y="152" text-anchor="middle">saveUser</text>
+  <text class="sm" x="530" y="134" text-anchor="middle">先不发，</text>
+  <text class="sm" x="530" y="150" text-anchor="middle">只是记账</text>
+  <path class="ln-g" style="stroke-width:2.2" d="M122 198 H296" marker-end="url(#ar-g)"/><text class="mono sm on-g" x="209" y="192" text-anchor="middle">saveChanges</text>
+  <path class="ln-g" style="stroke-width:2.2" d="M432 198 H626" marker-end="url(#ar-g)"/><text class="sm on-g" x="530" y="192" text-anchor="middle">一次性写入全部更新</text>
+  <text class="sm" x="380" y="242" text-anchor="middle">更新仍然包在数据库事务里，但这个事务存活的时间短得多 &rarr; 减少数据争用，通常也减少调用次数</text>
+</svg>
+<figcaption>图 10-5　工作单元把所有更新推迟到业务操作的最后一刻</figcaption>
+</figure>
+
+<p>
+  维护修改清单、再生成 SQL，听起来工作量很大，但你不用自己做 —— <strong>大多数 ORM 已经替你实现了工作单元模式</strong>：
+</p>
+
+<div class="tw">
+<table>
+  <tr><th>语言</th><th>ORM</th><th>充当工作单元的类</th><th>提交</th></tr>
+  <tr><td>C#（原书）</td><td>Entity Framework</td><td><code>DbContext</code></td><td><code>SaveChanges()</code></td></tr>
+  <tr><td>Java</td><td>JPA / Hibernate</td><td><code>EntityManager</code> / <code>Session</code></td><td>事务 <code>commit()</code> 时自动 flush</td></tr>
+  <tr><td>Python</td><td>SQLAlchemy</td><td><code>Session</code></td><td><code>session.commit()</code></td></tr>
+  <tr><td>TypeScript</td><td>MikroORM / TypeORM</td><td><code>EntityManager</code></td><td><code>em.flush()</code> / 事务提交</td></tr>
+</table>
+</div>
+
+<p>下面的代码沿用原书的命名，用 <code>CrmContext</code> 代表「你项目里的那个工作单元类」（它包着上表里对应的东西）：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class UserController {
+    private final CrmContext context;              // 工作单元，代替了 Transaction
+    private final UserRepository userRepository;
+    private final CompanyRepository companyRepository;
+    private final EventDispatcher eventDispatcher;
+
+    public UserController(CrmContext context, MessageBus messageBus, IDomainLogger domainLogger) {
+        this.context = context;
+        this.userRepository = new UserRepository(context);
+        this.companyRepository = new CompanyRepository(context);
+        this.eventDispatcher = new EventDispatcher(messageBus, domainLogger);
+    }
+
+    public String changeEmail(int userId, String newEmail) {
+        User user = userRepository.getUserById(userId);     // ORM 直接返回领域对象，不再需要工厂
+
+        String error = user.canChangeEmail();
+        if (error != null) return error;
+
+        Company company = companyRepository.getCompany();
+
+        user.changeEmail(newEmail, company);
+
+        companyRepository.saveCompany(company);
+        userRepository.saveUser(user);
+        eventDispatcher.dispatch(user.getDomainEvents());
+
+        context.saveChanges();                              // 代替 transaction.commit()
+        return "OK";
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class UserController:
+    def __init__(self, context: CrmContext,        # 工作单元，代替了 Transaction
+                 message_bus: MessageBus, domain_logger: DomainLogger) -&gt; None:
+        self._context = context
+        self._user_repository = UserRepository(context)
+        self._company_repository = CompanyRepository(context)
+        self._event_dispatcher = EventDispatcher(message_bus, domain_logger)
+
+    def change_email(self, user_id: int, new_email: str) -&gt; str:
+        user = self._user_repository.get_user_by_id(user_id)   # ORM 直接返回领域对象，不再需要工厂
+
+        error = user.can_change_email()
+        if error is not None:
+            return error
+
+        company = self._company_repository.get_company()
+
+        user.change_email(new_email, company)
+
+        self._company_repository.save_company(company)
+        self._user_repository.save_user(user)
+        self._event_dispatcher.dispatch(user.domain_events)
+
+        self._context.save_changes()                           # 代替 transaction.commit()
+        return "OK"
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class UserController {
+  private readonly userRepository: UserRepository
+  private readonly companyRepository: CompanyRepository
+  private readonly eventDispatcher: EventDispatcher
+
+  constructor(
+    private readonly context: CrmContext,          // 工作单元，代替了 Transaction
+    messageBus: MessageBus,
+    domainLogger: IDomainLogger,
+  ) {
+    this.userRepository = new UserRepository(context)
+    this.companyRepository = new CompanyRepository(context)
+    this.eventDispatcher = new EventDispatcher(messageBus, domainLogger)
+  }
+
+  async changeEmail(userId: number, newEmail: string): Promise&lt;string&gt; {
+    const user = await this.userRepository.getUserById(userId)   // ORM 直接返回领域对象，不再需要工厂
+
+    const error = user.canChangeEmail()
+    if (error !== null) return error
+
+    const company = await this.companyRepository.getCompany()
+
+    user.changeEmail(newEmail, company)
+
+    this.companyRepository.saveCompany(company)
+    this.userRepository.saveUser(user)
+    this.eventDispatcher.dispatch(user.domainEvents)
+
+    await this.context.saveChanges()                             // 代替 transaction.commit()
+    return 'OK'
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 10.4 · 仓库 <code>code/Book/Chapter10/EF/EF.cs</code></p>
+
+<div class="box deep">
+  <div class="t">&#128300; 非关系型数据库怎么办</div>
+  <p>
+    大多数文档数据库（如 MongoDB）没有传统意义上的跨文档事务，原子更新只在<strong>单个文档</strong>内有保证。
+    它们从另一个角度解决不一致：要求你把文档设计成<strong>任何业务操作都不会同时修改多个文档</strong>。
+    文档比关系表的行灵活得多，一个文档就能装下很复杂的数据。
+    领域驱动设计里「一次业务操作不要修改多个聚合」的准则，目的也是这个。
+  </p>
+</div>
+
+<h3>集成测试里的事务</h3>
+
+<div class="box key">
+  <div class="t">&#9733; 准则</div>
+  <p>
+    <strong>不要在测试的各个阶段之间复用数据库事务或工作单元。</strong>
+    集成测试里至少用三个：准备、执行、断言各一个。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="错误做法是准备、执行、断言三段共用一个工作单元。正确做法是三段各用一个独立的工作单元，与生产环境中每次业务操作独占一个工作单元的情形一致">
+  <text class="ttl on-r" x="185" y="22" text-anchor="middle">&#10007; 三段共用一个工作单元</text>
+  <rect class="bx-r" x="20" y="36" width="330" height="150" rx="12"/>
+  <text class="sm on-r" x="185" y="56" text-anchor="middle">同一个 CrmContext</text>
+  <rect class="bx" x="36" y="70" width="90" height="46" rx="8"/><text class="lbl" x="81" y="98" text-anchor="middle">准备</text>
+  <rect class="bx" x="140" y="70" width="90" height="46" rx="8"/><text class="lbl" x="185" y="98" text-anchor="middle">执行</text>
+  <rect class="bx" x="244" y="70" width="90" height="46" rx="8"/><text class="lbl" x="289" y="98" text-anchor="middle">断言</text>
+  <text class="sm" x="36" y="140">· 和生产环境不符：生产里每次操作独占一个</text>
+  <text class="sm" x="36" y="158">· ORM 会缓存对象：断言读到的可能是内存里</text>
+  <text class="sm" x="36" y="174">  的缓存，而不是真正写进数据库的东西</text>
+
+  <text class="ttl on-g" x="565" y="22" text-anchor="middle">&#10003; 每段一个独立的工作单元</text>
+  <rect class="bx-g" x="400" y="36" width="106" height="90" rx="12"/>
+  <text class="sm on-g" x="453" y="56" text-anchor="middle">Context 1</text>
+  <rect class="bx" x="410" y="66" width="86" height="46" rx="8"/><text class="lbl" x="453" y="94" text-anchor="middle">准备</text>
+  <rect class="bx-g" x="518" y="36" width="106" height="90" rx="12"/>
+  <text class="sm on-g" x="571" y="56" text-anchor="middle">Context 2</text>
+  <rect class="bx" x="528" y="66" width="86" height="46" rx="8"/><text class="lbl" x="571" y="94" text-anchor="middle">执行</text>
+  <rect class="bx-g" x="636" y="36" width="106" height="90" rx="12"/>
+  <text class="sm on-g" x="689" y="56" text-anchor="middle">Context 3</text>
+  <rect class="bx" x="646" y="66" width="86" height="46" rx="8"/><text class="lbl" x="689" y="94" text-anchor="middle">断言</text>
+  <path class="ln-g" d="M453 128 V156" marker-end="url(#ar-g)"/>
+  <path class="ln-g" d="M571 128 V156" marker-end="url(#ar-g)"/>
+  <path class="ln-g" d="M689 160 V132" marker-end="url(#ar-g)"/>
+  <rect class="bx" x="400" y="160" width="342" height="36" rx="8"/><text class="lbl" x="571" y="183" text-anchor="middle">真实的数据库</text>
+  <text class="sm" x="571" y="222" text-anchor="middle">断言读到的一定是数据库里真正存下来的数据</text>
+  <text class="sm" x="571" y="240" text-anchor="middle">执行阶段的环境与生产一致</text>
+</svg>
+<figcaption>图 10-6　集成测试应尽可能复刻生产环境：执行阶段不和任何人共享工作单元</figcaption>
+</figure>
+
+<p>
+  为什么？在生产环境里，每次业务操作都有一个<strong>独占的</strong>工作单元实例：控制器方法调用前创建，调用后立刻销毁。
+  测试如果在三个阶段共用同一个实例，就造出了一个和生产不一样的环境。
+  而且第 8 章说过，断言时要<strong>独立于输入数据</strong>去检查数据库状态 —— 共用上下文时，很多 ORM 会为了性能缓存查询过的对象，
+  你「重新查出来」的可能还是刚才内存里那个。
+</p>
+
+<h2 id="lifecycle">测试数据的生命周期</h2>
+
+<p>
+  数据库是共享依赖，集成测试之间需要相互隔离。为此要做两件事：<strong>顺序执行</strong>集成测试；在测试运行之间<strong>清理残留数据</strong>。
+  总的原则是：<strong>测试不应该依赖数据库当前的状态，它应该自己把状态摆到需要的样子。</strong>
+</p>
+
+<h3>并行还是顺序</h3>
+
+<p>
+  让集成测试并行要花很多功夫：得保证所有测试数据唯一（否则会违反数据库约束，或者一个测试误拿到另一个的数据），清理也更麻烦。
+  <strong>顺序跑集成测试更实际。</strong>多数测试框架都能把测试分组并单独关掉某一组的并行 —— 分成单元测试和集成测试两组，只关掉后者的并行即可。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 用容器并行呢？</div>
+  <p>
+    可以给每个集成测试起一个新的数据库容器，但实践中维护负担太重：要维护镜像、保证每个测试拿到自己的容器、分批执行、回收用过的容器。
+    除非你<strong>非常需要</strong>压缩集成测试的执行时间，否则不推荐。每个开发者一个数据库实例就够了 ——
+    这个实例本身跑在 Docker 里完全没问题。作者反对的是<strong>过早的并行化</strong>，不是 Docker。
+  </p>
+</div>
+
+<h3>什么时候清理数据</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="四种清理测试数据的方式对比：每次测试前恢复数据库备份太慢；测试结束时清理可能被跳过；把测试包在不提交的事务里会导致与生产环境行为不一致；在测试开始时清理是最好的选择">
+  <rect class="bx" x="14" y="14" width="360" height="106" rx="10"/>
+  <text class="ttl" x="30" y="38">① 每个测试前恢复数据库备份</text>
+  <text class="sm" x="30" y="60">问题解决了，但比其他三种慢得多。</text>
+  <text class="sm" x="30" y="78">即使用容器，删掉旧实例、起一个新的也要好几秒</text>
+  <text class="sm on-r" x="30" y="104">&#10007; 太慢</text>
+
+  <rect class="bx" x="386" y="14" width="360" height="106" rx="10"/>
+  <text class="ttl" x="402" y="38">② 测试结束时清理</text>
+  <text class="sm" x="402" y="60">快，但清理步骤可能被跳过：构建服务器中途崩了、</text>
+  <text class="sm" x="402" y="78">你在调试器里把测试停了 &rarr; 脏数据留下，影响后续运行</text>
+  <text class="sm on-r" x="402" y="104">&#10007; 可能被跳过</text>
+
+  <rect class="bx" x="14" y="134" width="360" height="110" rx="10"/>
+  <text class="ttl" x="30" y="158">③ 把测试包在一个永不提交的事务里</text>
+  <text class="sm" x="30" y="180">改动自动回滚，不会漏清理。但这个额外的外层事务</text>
+  <text class="sm" x="30" y="198">造出了和生产不一样的环境（和复用工作单元同样的问题）</text>
+  <text class="sm on-r" x="30" y="224">&#10007; 与生产行为不一致</text>
+
+  <rect class="bx-g" x="386" y="134" width="360" height="110" rx="10"/>
+  <text class="ttl on-g" x="402" y="158">④ 测试开始时清理 &#9733;</text>
+  <text class="sm" x="402" y="180">快；不会造成行为不一致；</text>
+  <text class="sm" x="402" y="198">也不会因为上一次运行意外中断而漏掉</text>
+  <text class="sm on-g" x="402" y="224">&#10003; 最佳选择 —— 把清理当成「准备」阶段的一部分</text>
+</svg>
+<figcaption>图 10-7　四种清理方式。不需要单独的 teardown 阶段</figcaption>
+</figure>
+
+<p>
+  删除要按特定顺序进行，以满足外键约束。有人会用复杂的算法自动推断表之间的关系来生成删除脚本，甚至先禁用所有约束再恢复 —— 没必要。
+  <strong>手写 SQL 脚本</strong>：更简单，对删除过程的控制也更细。把它放进所有集成测试的基类里，每个测试开始时自动执行：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+abstract class IntegrationTests {
+    protected static final String CONNECTION_STRING = "...";
+
+    @BeforeEach
+    void clearDatabase() throws SQLException {
+        String query =
+            "DELETE FROM users;" +          // 先删依赖别人的表
+            "DELETE FROM company;";         // 只删普通数据，不动参考数据
+
+        try (var connection = DriverManager.getConnection(CONNECTION_STRING);
+             var statement = connection.createStatement()) {
+            statement.execute(query);
+        }
+    }
+}
+
+class UserControllerTests extends IntegrationTests {
+    /* 测试写在这里 */
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# conftest.py —— pytest 用 autouse fixture 代替基类
+import pytest
+
+CONNECTION_STRING = "..."
+
+
+@pytest.fixture(autouse=True)
+def clear_database():
+    query = (
+        "DELETE FROM users;"            # 先删依赖别人的表
+        "DELETE FROM company;"          # 只删普通数据，不动参考数据
+    )
+    with connect(CONNECTION_STRING) as connection:
+        connection.execute(query)
+    # 注意：这里没有 yield 之后的清理代码 —— 清理发生在测试「开始」时
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// integration-tests.ts —— 在每个集成测试文件里调用一次
+export const CONNECTION_STRING = '...'
+
+export function useCleanDatabase(): void {
+  beforeEach(async () =&gt; {
+    const query =
+      'DELETE FROM users;' +            // 先删依赖别人的表
+      'DELETE FROM company;'            // 只删普通数据，不动参考数据
+
+    const connection = await connect(CONNECTION_STRING)
+    try {
+      await connection.query(query)
+    } finally {
+      await connection.end()
+    }
+  })
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 10.6 · 仓库 <code>code/Book/Chapter10/V1/V1.cs</code></p>
+
+<div class="box tip">
+  <div class="t">&#128161;</div>
+  <p>删除脚本要清掉所有<strong>普通数据</strong>，但<strong>一条参考数据都不能动</strong>。参考数据和其他数据库结构一样，只能由迁移来管理。</p>
+</div>
+
+<h3>避免使用内存数据库</h3>
+
+<p>
+  另一种隔离办法是把数据库换成内存里的替代品（比如 SQLite、H2）。看起来很美：不用清数据、更快、每次测试都能新建一个。
+  而且它不再是共享依赖，集成测试实际上变成了单元测试。
+</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 但是不推荐</div>
+  <p>
+    内存数据库和真正的数据库在功能上<strong>并不一致</strong> —— 又是生产环境和测试环境不匹配的老问题。
+    这些差异会让你的测试出现误报，或者（更糟）<strong>漏报</strong>。靠这样的测试你永远得不到可靠的保护，最后还是得手工做大量回归测试。
+  </p>
+  <p><strong>测试里用和生产相同的数据库管理系统。</strong>版本号或版本类型（社区版 / 企业版）不同通常没关系，但<strong>厂商必须相同</strong>。</p>
+</div>
+
+<h2 id="reuse">在测试的各个阶段复用代码</h2>
+
+<p>
+  集成测试很容易越写越长，可维护性越来越差。要让它尽量短，但<strong>不能</strong>让测试彼此耦合，也不能牺牲可读性 ——
+  再短的测试也不该互相依赖，而且必须保留测试场景的完整上下文。
+  最好的办法是：<strong>把技术性的、与业务无关的部分抽到私有方法或辅助类里。</strong>
+</p>
+
+<p>先看「每段一个工作单元」之后测试长什么样 —— 正确，但啰嗦：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="改进前：正确但太长"><pre>
+@Test
+void changing_email_from_corporate_to_non_corporate() {
+    // Arrange
+    User user;
+    try (var context = new CrmContext(CONNECTION_STRING)) {
+        var userRepository = new UserRepository(context);
+        var companyRepository = new CompanyRepository(context);
+        user = new User(0, "user@mycorp.com", UserType.EMPLOYEE, false);
+        userRepository.saveUser(user);
+        var company = new Company("mycorp.com", 1);
+        companyRepository.saveCompany(company);
+        context.saveChanges();
+    }
+
+    var busSpy = new BusSpy();
+    var messageBus = new MessageBus(busSpy);
+    IDomainLogger loggerMock = mock(IDomainLogger.class);
+
+    // Act
+    String result;
+    try (var context = new CrmContext(CONNECTION_STRING)) {
+        var sut = new UserController(context, messageBus, loggerMock);
+        result = sut.changeEmail(user.getUserId(), "new@gmail.com");
+    }
+
+    // Assert
+    assertThat(result).isEqualTo("OK");
+
+    try (var context = new CrmContext(CONNECTION_STRING)) {
+        var userRepository = new UserRepository(context);
+        var companyRepository = new CompanyRepository(context);
+
+        User userFromDb = userRepository.getUserById(user.getUserId());
+        assertThat(userFromDb.getEmail()).isEqualTo("new@gmail.com");
+        assertThat(userFromDb.getType()).isEqualTo(UserType.CUSTOMER);
+
+        Company companyFromDb = companyRepository.getCompany();
+        assertThat(companyFromDb.getNumberOfEmployees()).isEqualTo(0);
+    }
+
+    busSpy.shouldSendNumberOfMessages(1)
+          .withEmailChangedMessage(user.getUserId(), "new@gmail.com");
+    verify(loggerMock, times(1)).userTypeHasChanged(
+        user.getUserId(), UserType.EMPLOYEE, UserType.CUSTOMER);
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="改进前：正确但太长"><pre>
+def test_changing_email_from_corporate_to_non_corporate():
+    # Arrange
+    with CrmContext(CONNECTION_STRING) as context:
+        user_repository = UserRepository(context)
+        company_repository = CompanyRepository(context)
+        user = User(0, "user@mycorp.com", UserType.EMPLOYEE, False)
+        user_repository.save_user(user)
+        company = Company("mycorp.com", 1)
+        company_repository.save_company(company)
+        context.save_changes()
+        user_id = user.user_id
+
+    bus_spy = BusSpy()
+    message_bus = MessageBus(bus_spy)
+    logger_mock = Mock(spec=DomainLogger)
+
+    # Act
+    with CrmContext(CONNECTION_STRING) as context:
+        sut = UserController(context, message_bus, logger_mock)
+        result = sut.change_email(user_id, "new@gmail.com")
+
+    # Assert
+    assert result == "OK"
+
+    with CrmContext(CONNECTION_STRING) as context:
+        user_repository = UserRepository(context)
+        company_repository = CompanyRepository(context)
+
+        user_from_db = user_repository.get_user_by_id(user_id)
+        assert user_from_db.email == "new@gmail.com"
+        assert user_from_db.type == UserType.CUSTOMER
+
+        company_from_db = company_repository.get_company()
+        assert company_from_db.number_of_employees == 0
+
+    (bus_spy.should_send_number_of_messages(1)
+            .with_email_changed_message(user_id, "new@gmail.com"))
+    logger_mock.user_type_has_changed.assert_called_once_with(
+        user_id, UserType.EMPLOYEE, UserType.CUSTOMER)
+</pre></div>
+<div class="code" data-lang="ts" data-file="改进前：正确但太长"><pre>
+test('changing email from corporate to non corporate', async () =&gt; {
+  // Arrange
+  let user: User
+  {
+    const context = new CrmContext(CONNECTION_STRING)
+    const userRepository = new UserRepository(context)
+    const companyRepository = new CompanyRepository(context)
+    user = new User(0, 'user@mycorp.com', UserType.Employee, false)
+    userRepository.saveUser(user)
+    const company = new Company('mycorp.com', 1)
+    companyRepository.saveCompany(company)
+    await context.saveChanges()
+    await context.dispose()
+  }
+
+  const busSpy = new BusSpy()
+  const messageBus = new MessageBus(busSpy)
+  const loggerMock: IDomainLogger = { userTypeHasChanged: vi.fn() }
+
+  // Act
+  let result: string
+  {
+    const context = new CrmContext(CONNECTION_STRING)
+    const sut = new UserController(context, messageBus, loggerMock)
+    result = await sut.changeEmail(user.userId, 'new@gmail.com')
+    await context.dispose()
+  }
+
+  // Assert
+  expect(result).toBe('OK')
+  {
+    const context = new CrmContext(CONNECTION_STRING)
+    const userRepository = new UserRepository(context)
+    const companyRepository = new CompanyRepository(context)
+
+    const userFromDb = await userRepository.getUserById(user.userId)
+    expect(userFromDb.email).toBe('new@gmail.com')
+    expect(userFromDb.type).toBe(UserType.Customer)
+
+    const companyFromDb = await companyRepository.getCompany()
+    expect(companyFromDb.numberOfEmployees).toBe(0)
+    await context.dispose()
+  }
+
+  busSpy.shouldSendNumberOfMessages(1)
+        .withEmailChangedMessage(user.userId, 'new@gmail.com')
+  expect(loggerMock.userTypeHasChanged).toHaveBeenCalledOnce()
+  expect(loggerMock.userTypeHasChanged)
+    .toHaveBeenCalledWith(user.userId, UserType.Employee, UserType.Customer)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 10.7</p>
+
+<h3>准备段：工厂方法（Object Mother）</h3>
+
+<p>
+  第 3 章说过，复用准备代码的最好方式是私有工厂方法。给参数加上<strong>默认值</strong>，测试就可以只指定和场景相关的那几个 ——
+  既更短，又<strong>突出了哪些参数对这个测试是重要的</strong>。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// Java 没有默认参数。可以用重载，或者用一个小的 Test Data Builder：
+private User createUser(String email, UserType type, boolean isEmailConfirmed) {
+    try (var context = new CrmContext(CONNECTION_STRING)) {
+        var user = new User(0, email, type, isEmailConfirmed);
+        new UserRepository(context).saveUser(user);
+        context.saveChanges();
+        return user;
+    }
+}
+
+private User createUser(String email, UserType type) {      // 重载：isEmailConfirmed 默认 false
+    return createUser(email, type, false);
+}
+
+// 使用
+User user = createUser("user@mycorp.com", UserType.EMPLOYEE);
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def create_user(
+    email: str = "user@mycorp.com",
+    user_type: UserType = UserType.EMPLOYEE,
+    is_email_confirmed: bool = False,
+) -&gt; User:
+    with CrmContext(CONNECTION_STRING) as context:
+        user = User(0, email, user_type, is_email_confirmed)
+        UserRepository(context).save_user(user)
+        context.save_changes()
+        return user
+
+
+# 使用：只写出和这个场景相关的参数
+user = create_user(email="user@mycorp.com", user_type=UserType.EMPLOYEE)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+async function createUser({
+  email = 'user@mycorp.com',
+  type = UserType.Employee,
+  isEmailConfirmed = false,
+}: { email?: string; type?: UserType; isEmailConfirmed?: boolean } = {}): Promise&lt;User&gt; {
+  const context = new CrmContext(CONNECTION_STRING)
+  try {
+    const user = new User(0, email, type, isEmailConfirmed)
+    new UserRepository(context).saveUser(user)
+    await context.saveChanges()
+    return user
+  } finally {
+    await context.dispose()
+  }
+}
+
+// 使用：只写出和这个场景相关的参数
+const user = await createUser({ email: 'user@mycorp.com', type: UserType.Employee })
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 10.8–10.10</p>
+
+<div class="box note">
+  <div class="t">&#9432; Object Mother vs. Test Data Builder</div>
+  <p>
+    上面这种「帮你创建测试夹具的类或方法」叫 <strong>Object Mother</strong>。另一个达到同样目的的模式是 <strong>Test Data Builder</strong>，它提供流式接口：
+    <code>new UserBuilder().withEmail("…").withType(EMPLOYEE).build()</code>。
+  </p>
+  <p>
+    Builder 读起来稍好一点，但样板代码多。原书作者在 C# 里推荐 Object Mother，因为 C# 有可选参数。
+    Python 和 TypeScript 同理；<strong>Java 没有默认参数</strong>，所以在 Java 里用 Builder（或 Lombok 的 <code>@Builder</code>）往往更顺手。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#128161; 工厂方法放哪</div>
+  <p>
+    从简单开始：<strong>默认放在测试类里</strong>。等重复成了明显的问题，再挪到单独的辅助类。
+    <strong>不要放进基类</strong> —— 基类只留给每个测试都必须运行的代码，比如数据清理。
+  </p>
+</div>
+
+<h3>执行段：装饰方法</h3>
+
+<p>
+  每个执行段都要创建工作单元、创建控制器。把这些包进一个方法，让它接收一个「要调用控制器的哪个方法」的函数：
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+private String execute(Function&lt;UserController, String&gt; func,
+                       MessageBus messageBus, IDomainLogger logger) {
+    try (var context = new CrmContext(CONNECTION_STRING)) {
+        var controller = new UserController(context, messageBus, logger);
+        return func.apply(controller);
+    }
+}
+
+// 使用：执行段缩成了一句
+String result = execute(
+    x -&gt; x.changeEmail(user.getUserId(), "new@gmail.com"),
+    messageBus, loggerMock);
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def execute(func: Callable[[UserController], str],
+            message_bus: MessageBus, logger: DomainLogger) -&gt; str:
+    with CrmContext(CONNECTION_STRING) as context:
+        controller = UserController(context, message_bus, logger)
+        return func(controller)
+
+
+# 使用：执行段缩成了一句
+result = execute(
+    lambda x: x.change_email(user.user_id, "new@gmail.com"),
+    message_bus, logger_mock)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+async function execute(
+  func: (controller: UserController) =&gt; Promise&lt;string&gt;,
+  messageBus: MessageBus,
+  logger: IDomainLogger,
+): Promise&lt;string&gt; {
+  const context = new CrmContext(CONNECTION_STRING)
+  try {
+    const controller = new UserController(context, messageBus, logger)
+    return await func(controller)
+  } finally {
+    await context.dispose()
+  }
+}
+
+// 使用：执行段缩成了一句
+const result = await execute(
+  (x) =&gt; x.changeEmail(user.userId, 'new@gmail.com'),
+  messageBus, loggerMock)
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 10.11</p>
+
+<h3>断言段：查询辅助方法 + 流式断言</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// 测试代码里的断言辅助类（Java 没有扩展方法，用一个包装类实现流式接口）
+public class UserAssert {
+    private final User user;
+    private UserAssert(User user) { this.user = user; }
+
+    public static UserAssert assertThatUser(User user) { return new UserAssert(user); }
+
+    public UserAssert exists() {
+        assertThat(user).isNotNull();
+        return this;
+    }
+    public UserAssert hasEmail(String email) {
+        assertThat(user.getEmail()).isEqualTo(email);
+        return this;
+    }
+    public UserAssert hasType(UserType type) {
+        assertThat(user.getType()).isEqualTo(type);
+        return this;
+    }
+}
+
+// 使用
+User userFromDb = queryUser(user.getUserId());
+assertThatUser(userFromDb)
+    .exists()
+    .hasEmail("new@gmail.com")
+    .hasType(UserType.CUSTOMER);
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# 测试代码里的断言辅助类
+class UserAssert:
+    def __init__(self, user: User | None) -&gt; None:
+        self._user = user
+
+    def should_exist(self) -&gt; "UserAssert":
+        assert self._user is not None
+        return self
+
+    def with_email(self, email: str) -&gt; "UserAssert":
+        assert self._user.email == email
+        return self
+
+    def with_type(self, user_type: UserType) -&gt; "UserAssert":
+        assert self._user.type == user_type
+        return self
+
+
+# 使用
+user_from_db = query_user(user.user_id)
+(UserAssert(user_from_db)
+    .should_exist()
+    .with_email("new@gmail.com")
+    .with_type(UserType.CUSTOMER))
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// 测试代码里的断言辅助函数
+export function expectUser(user: User | null) {
+  const api = {
+    toExist() {
+      expect(user).not.toBeNull()
+      return api
+    },
+    withEmail(email: string) {
+      expect(user!.email).toBe(email)
+      return api
+    },
+    withType(type: UserType) {
+      expect(user!.type).toBe(type)
+      return api
+    },
+  }
+  return api
+}
+
+// 使用
+const userFromDb = await queryUser(user.userId)
+expectUser(userFromDb)
+  .toExist()
+  .withEmail('new@gmail.com')
+  .withType(UserType.Customer)
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 10.12 / 10.13</p>
+
+<h3>改进之后</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="改进后：只剩下和业务场景有关的内容"><pre>
+class UserControllerTests extends IntegrationTests {
+    @Test
+    void changing_email_from_corporate_to_non_corporate() {
+        // Arrange
+        User user = createUser("user@mycorp.com", UserType.EMPLOYEE);
+        createCompany("mycorp.com", 1);
+
+        var busSpy = new BusSpy();
+        var messageBus = new MessageBus(busSpy);
+        IDomainLogger loggerMock = mock(IDomainLogger.class);
+
+        // Act
+        String result = execute(
+            x -&gt; x.changeEmail(user.getUserId(), "new@gmail.com"),
+            messageBus, loggerMock);
+
+        // Assert
+        assertThat(result).isEqualTo("OK");
+
+        assertThatUser(queryUser(user.getUserId()))
+            .exists()
+            .hasEmail("new@gmail.com")
+            .hasType(UserType.CUSTOMER);
+
+        assertThatCompany(queryCompany())
+            .exists()
+            .hasNumberOfEmployees(0);
+
+        busSpy.shouldSendNumberOfMessages(1)
+              .withEmailChangedMessage(user.getUserId(), "new@gmail.com");
+        verify(loggerMock, times(1)).userTypeHasChanged(
+            user.getUserId(), UserType.EMPLOYEE, UserType.CUSTOMER);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="改进后：只剩下和业务场景有关的内容"><pre>
+def test_changing_email_from_corporate_to_non_corporate():
+    # Arrange
+    user = create_user(email="user@mycorp.com", user_type=UserType.EMPLOYEE)
+    create_company("mycorp.com", 1)
+
+    bus_spy = BusSpy()
+    message_bus = MessageBus(bus_spy)
+    logger_mock = Mock(spec=DomainLogger)
+
+    # Act
+    result = execute(
+        lambda x: x.change_email(user.user_id, "new@gmail.com"),
+        message_bus, logger_mock)
+
+    # Assert
+    assert result == "OK"
+
+    (UserAssert(query_user(user.user_id))
+        .should_exist()
+        .with_email("new@gmail.com")
+        .with_type(UserType.CUSTOMER))
+
+    (CompanyAssert(query_company())
+        .should_exist()
+        .with_number_of_employees(0))
+
+    (bus_spy.should_send_number_of_messages(1)
+            .with_email_changed_message(user.user_id, "new@gmail.com"))
+    logger_mock.user_type_has_changed.assert_called_once_with(
+        user.user_id, UserType.EMPLOYEE, UserType.CUSTOMER)
+</pre></div>
+<div class="code" data-lang="ts" data-file="改进后：只剩下和业务场景有关的内容"><pre>
+describe('UserController', () =&gt; {
+  useCleanDatabase()
+
+  test('changing email from corporate to non corporate', async () =&gt; {
+    // Arrange
+    const user = await createUser({ email: 'user@mycorp.com', type: UserType.Employee })
+    await createCompany('mycorp.com', 1)
+
+    const busSpy = new BusSpy()
+    const messageBus = new MessageBus(busSpy)
+    const loggerMock: IDomainLogger = { userTypeHasChanged: vi.fn() }
+
+    // Act
+    const result = await execute(
+      (x) =&gt; x.changeEmail(user.userId, 'new@gmail.com'),
+      messageBus, loggerMock)
+
+    // Assert
+    expect(result).toBe('OK')
+
+    expectUser(await queryUser(user.userId))
+      .toExist()
+      .withEmail('new@gmail.com')
+      .withType(UserType.Customer)
+
+    expectCompany(await queryCompany())
+      .toExist()
+      .withNumberOfEmployees(0)
+
+    busSpy.shouldSendNumberOfMessages(1)
+          .withEmailChangedMessage(user.userId, 'new@gmail.com')
+    expect(loggerMock.userTypeHasChanged).toHaveBeenCalledOnce()
+    expect(loggerMock.userTypeHasChanged)
+      .toHaveBeenCalledWith(user.userId, UserType.Employee, UserType.Customer)
+  })
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 10.14</p>
+
+<div class="box note">
+  <div class="t">&#9432; 事务数量变多了，要紧吗？</div>
+  <p>
+    简化之后，测试用了<strong>五个</strong>工作单元（两个 create、一个 execute、两个 query），原来只有三个。这会让测试慢一点。
+    这又是一个取舍 —— 这次是<strong>快速反馈</strong>和<strong>可维护性</strong>之间。在这里拿性能换可维护性是值得的：
+    数据库在本机时性能损失不大，可维护性的提升却很可观。
+  </p>
+</div>
+
+<h2 id="faq">数据库测试的常见问题</h2>
+
+<h3>读操作要不要测</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="应用内部写操作经过领域模型，读操作不需要领域模型，可以直接用 SQL。写操作必须充分测试，读操作只测最复杂最重要的">
+  <rect class="bx" x="20" y="90" width="110" height="60" rx="10"/><text class="lbl" x="75" y="125" text-anchor="middle">客户端</text>
+  <rect class="bx-d" x="180" y="20" width="400" height="200" rx="14" style="fill:none"/>
+  <text class="sm" x="380" y="212" text-anchor="middle">应用</text>
+  <rect class="bx" x="630" y="90" width="110" height="60" rx="10"/><text class="lbl" x="685" y="125" text-anchor="middle">数据库</text>
+
+  <rect class="bx-a" x="300" y="40" width="160" height="50" rx="10"/><text class="lbl on-a" x="380" y="70" text-anchor="middle">领域模型</text>
+  <path class="ln-a" style="stroke-width:2.2" d="M132 108 C200 80 250 66 296 66" marker-end="url(#ar-a)"/>
+  <path class="ln-a" style="stroke-width:2.2" d="M462 66 C520 66 570 86 626 108" marker-end="url(#ar-a)"/>
+  <text class="ttl on-a" x="214" y="56" text-anchor="middle">写</text>
+  <text class="sm on-a" x="672" y="48" text-anchor="middle">出错 = 数据损坏</text>
+  <text class="sm on-a" x="672" y="64" text-anchor="middle">必须充分测试</text>
+
+  <rect class="bx" x="300" y="150" width="160" height="44" rx="10"/><text class="lbl" x="380" y="177" text-anchor="middle">直接写 SQL 查询</text>
+  <path class="ln-b" d="M626 134 C570 158 520 172 464 172" marker-end="url(#ar-b)"/>
+  <path class="ln-b" d="M296 172 C250 172 200 158 134 134" marker-end="url(#ar-b)"/>
+  <text class="ttl on-b" x="214" y="188" text-anchor="middle">读</text>
+  <text class="sm on-b" x="672" y="180" text-anchor="middle">出错后果较轻</text>
+  <text class="sm on-b" x="672" y="196" text-anchor="middle">只测最复杂 / 最重要的</text>
+</svg>
+<figcaption>图 10-8　领域模型用在写操作上，读操作不需要</figcaption>
+</figure>
+
+<p>
+  <strong>写操作必须充分测试</strong>，因为风险高：写出错常常导致数据损坏，不仅影响你自己的数据库，还可能波及外部应用。
+  <strong>读操作</strong>的 Bug 通常没有这么严重的后果，所以测试的门槛应该更高：<strong>只测最复杂或最重要的读操作，其余忽略。</strong>
+</p>
+<p>
+  顺带一提，读操作也<strong>不需要领域模型</strong>。领域建模的主要目的是封装，而封装是为了在数据变化时保持一致性 —— 读操作不改数据，封装就没有意义。
+  你甚至不需要 ORM，直接写 SQL 性能更好。既然读操作几乎没有抽象层，单元测试也就派不上用场；要测就用集成测试对着真数据库测。
+</p>
+
+<h3>仓储要不要单独测</h3>
+
+<p>
+  单独测试仓储「怎么把领域对象映射到数据库」看起来挺有用，毕竟这里出错的空间不小。
+  但这种测试对测试集来说是<strong>净亏损</strong>：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="仓储在四象限中位于控制器那一格：复杂度低但与进程外依赖通信。单独测试它成本高而收益低">
+  <path class="ln" d="M70 20 V220 H330" marker-start="url(#ar)" marker-end="url(#ar)"/>
+  <text class="sm" x="200" y="242" text-anchor="middle">协作者的数量 &rarr;</text>
+  <text class="sm" x="60" y="124" text-anchor="middle" transform="rotate(-90 60 124)">复杂度 / 领域重要性</text>
+  <rect class="bx-d" x="78" y="28" width="120" height="90" rx="8"/><text class="sm" x="138" y="70" text-anchor="middle">领域模型</text><text class="sm" x="138" y="86" text-anchor="middle">与算法</text>
+  <rect class="bx-d" x="204" y="28" width="120" height="90" rx="8"/><text class="sm" x="264" y="78" text-anchor="middle">过度复杂的代码</text>
+  <rect class="bx-d" x="78" y="124" width="120" height="90" rx="8"/><text class="sm" x="138" y="174" text-anchor="middle">琐碎代码</text>
+  <rect class="bx-b" x="204" y="124" width="120" height="90" rx="8"/><text class="sm on-b" x="264" y="146" text-anchor="middle">控制器</text>
+  <circle cx="264" cy="172" r="8" fill="var(--accent)"/>
+  <text class="lbl on-a" x="264" y="200" text-anchor="middle">仓储在这</text>
+
+  <rect class="bx" x="380" y="28" width="360" height="86" rx="10"/>
+  <text class="ttl" x="396" y="52">成本：和普通集成测试一样高</text>
+  <text class="sm" x="396" y="74">要连真数据库、要准备和清理数据</text>
+  <text class="sm" x="396" y="92">（因为它在右边 —— 有进程外协作者）</text>
+  <rect class="bx" x="380" y="126" width="360" height="86" rx="10"/>
+  <text class="ttl" x="396" y="150">收益：很低</text>
+  <text class="sm" x="396" y="172">本身没什么逻辑（因为它在下边 —— 复杂度低），</text>
+  <text class="sm" x="396" y="190">而且已经被整体的集成测试顺带覆盖了</text>
+  <path class="ln-a" d="M276 172 H376" style="stroke-dasharray:4 3"/>
+</svg>
+<figcaption>图 10-9　仓储落在「控制器」象限：测试成本高，独立测试的额外收益低</figcaption>
+</figure>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128184;</span><h4>维护成本高</h4>
+    <p>在四象限里，仓储属于<strong>控制器</strong>那一格：复杂度低，却和进程外依赖（数据库）打交道。测它的成本和普通集成测试一样高。</p></div>
+  <div class="card"><span class="ic">&#128201;</span><h4>防止回归的增益低</h4>
+    <p>仓储本身没多少复杂度，而它能带来的保护，大部分已经被常规的集成测试覆盖了。重复了。</p></div>
+</div>
+
+<div class="box key">
+  <div class="t">&#9733; 准则</div>
+  <p>
+    <strong>不要直接测试仓储，只把它作为整体集成测试的一部分来测。</strong>
+    如果仓储里确实有一点复杂逻辑，最好把它抽成一个不带任何协作者的独立算法单独测（之前的 <code>UserFactory</code> 就是这个思路）。
+    不过用了 ORM 之后，映射和数据库访问分不开，就只能靠集成测试整体覆盖了。
+  </p>
+  <p>同理，<strong>也不要单独测 <code>EventDispatcher</code></strong>：要维护复杂的 Mock 机制，换来的保护却太少。</p>
+</div>
+
+<h2 id="conclusion">结语</h2>
+
+<p>
+  精心编写的、直接对着数据库跑的测试能提供近乎无懈可击的保护。按原书作者的经验，它们是最有效的工具之一 ——
+  没有它们，你不可能对自己的软件有十足的信心。在你重构数据库、更换 ORM 或者更换数据库厂商时，这类测试的帮助尤其大。
+  本章中途把示例项目切换到了 ORM，集成测试只改了几行就确认了切换是成功的。
+</p>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>把数据库结构和源代码一起放进版本控制。结构包括表、视图、索引、存储过程，以及<strong>参考数据</strong>（应用正常运行所必需、但应用自己不能修改的数据）。</li>
+  <li>每个开发者一个独立的数据库实例，最好在自己的机器上。</li>
+  <li>优先选择<strong>基于迁移</strong>的数据库交付方式，因为处理数据迁移远比处理合并冲突重要。所有结构变更（含参考数据）都通过迁移来做；已提交的迁移不要修改。</li>
+  <li>业务操作必须<strong>原子地</strong>更新数据，依靠数据库的事务机制实现。把「改什么」（仓储）和「提交还是回滚」（事务）分开。</li>
+  <li>尽量使用<strong>工作单元</strong>模式：它建立在数据库事务之上，并把所有更新推迟到业务操作结束时执行。大多数 ORM 已经实现了它。</li>
+  <li><strong>不要在测试的各阶段之间复用事务或工作单元</strong>：准备、执行、断言各用各的。</li>
+  <li>集成测试<strong>顺序执行</strong>。并行要付出很大代价，通常不值得。</li>
+  <li><strong>在测试开始时清理残留数据。</strong>这样快、不会造成行为不一致，也不会被意外跳过；也就不需要单独的清理阶段。</li>
+  <li><strong>避免内存数据库。</strong>测试里用和生产相同的数据库管理系统。</li>
+  <li>通过把非本质的部分抽到私有方法或辅助类来缩短测试：准备段用 Object Mother（或 Builder）；执行段用装饰方法；断言段用流式接口。</li>
+  <li>测试读操作的门槛应比写操作高：只测最复杂或最重要的读操作。</li>
+  <li>不要直接测试仓储，只把它作为整体集成测试的一部分。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>同事发现上周提交的一个迁移脚本里列名拼错了，想直接改那个脚本文件。该怎么做？</summary>
+  <p>不要改已经提交的迁移 —— 可能已经有环境执行过它了。新建一个迁移来把列名改对。只有当错误的迁移会导致数据丢失时才破例修改它。</p>
+</details>
+<details class="quiz">
+  <summary>为什么「把每个测试包在事务里、最后回滚」不是最好的清理办法？</summary>
+  <p>因为多出来的外层事务让测试环境和生产环境不一样（生产里没有这个事务），可能导致行为不一致 —— 比如被测代码自己的提交 / 回滚逻辑表现不同。在测试开始时用删除脚本清理更可靠。</p>
+</details>
+<details class="quiz">
+  <summary>生产用 PostgreSQL，为了快，测试里用 H2 / SQLite 内存库。有什么风险？</summary>
+  <p>两种数据库在 SQL 方言、类型、约束、事务行为上都有差异。测试可能通过了但生产上失败（漏报），或者反过来（误报）。你得不到可靠的保护。应当在测试里也用 PostgreSQL。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>为你的 CRM 示例选一个迁移工具（Flyway / Alembic / Knex 等），写出创建 <code>users</code> 和 <code>company</code> 表的迁移，再写一个把参考数据（用户类型）插进去的迁移。</li>
+    <li>把集成测试改成「准备、执行、断言各用一个连接 / 会话」。然后故意让断言段复用执行段的会话，观察 ORM 缓存会不会让一个本该失败的测试通过。</li>
+    <li>写一个在每个测试<strong>开始时</strong>清库的基类 / fixture。故意在调试器里中途停掉一个测试，再跑下一个，确认它不受影响。</li>
+    <li>给你的集成测试写 <code>createUser</code>（带默认值）、<code>execute</code>、流式断言这三类辅助代码，对比改造前后测试的行数和可读性。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

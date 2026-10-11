@@ -1,0 +1,1352 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 6 章 · 单元测试的三种风格 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="6">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 6 章</span>
+<h1>单元测试的三种风格</h1>
+<p class="lede">
+  测试验证结果的方式只有三种：看<strong>返回值</strong>、看<strong>状态</strong>、看<strong>调用</strong>。
+  三种方式质量并不相等。这一章用四大支柱给它们排个序，然后通过一个完整的重构案例，
+  演示怎么把代码改造成能用最好的那种方式来测。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>认识三种风格：<strong>基于输出、基于状态、基于通信</strong></li>
+    <li>知道为什么基于输出的测试质量最高</li>
+    <li>理解<strong>纯函数</strong>和<strong>函数式架构</strong>（函数式核心 + 可变外壳）</li>
+    <li>跟着审计系统的例子走完「直接读写文件 &rarr; 用 Mock &rarr; 函数式架构」三步重构</li>
+    <li>了解函数式架构的代价，知道什么时候不值得用</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="three">三种风格</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="三种测试风格：基于输出的测试验证返回值；基于状态的测试验证操作完成后的状态；基于通信的测试用 Mock 验证被测系统对协作者的调用">
+  <rect class="bx-g" x="14" y="16" width="236" height="240" rx="12"/>
+  <text class="ttl on-g" x="132" y="42" text-anchor="middle">① 基于输出</text>
+  <rect class="bx" x="72" y="110" width="120" height="56" rx="10"/><text class="lbl" x="132" y="143" text-anchor="middle">生产代码</text>
+  <path class="ln" d="M30 138 H68" marker-end="url(#ar)"/><text class="sm" x="48" y="128" text-anchor="middle">输入</text>
+  <path class="ln-g" style="stroke-width:2.2" d="M194 138 H232" marker-end="url(#ar-g)"/><text class="sm on-g" x="212" y="158" text-anchor="middle">输出</text>
+  <rect class="bx" x="150" y="66" width="90" height="28" rx="14"/><text class="sm" x="195" y="85" text-anchor="middle">验证输出</text>
+  <path class="ln-g" d="M222 96 V124" style="stroke-dasharray:4 3"/>
+  <text class="sm" x="132" y="198" text-anchor="middle">给一个输入，检查返回值</text>
+  <text class="sm" x="132" y="216" text-anchor="middle">前提：代码没有副作用</text>
+  <text class="sm on-g" x="132" y="240" text-anchor="middle">也叫「函数式」风格</text>
+
+  <rect class="bx-b" x="262" y="16" width="236" height="240" rx="12"/>
+  <text class="ttl on-b" x="380" y="42" text-anchor="middle">② 基于状态</text>
+  <rect class="bx" x="320" y="110" width="120" height="56" rx="10"/><text class="lbl" x="366" y="143" text-anchor="middle">生产代码</text>
+  <circle cx="420" cy="150" r="9" style="fill:var(--blue-bg);stroke:var(--blue);stroke-width:1.5;stroke-dasharray:3 2"/>
+  <path class="ln" d="M278 138 H316" marker-end="url(#ar)"/><text class="sm" x="296" y="128" text-anchor="middle">输入</text>
+  <rect class="bx" x="398" y="66" width="90" height="28" rx="14"/><text class="sm" x="443" y="85" text-anchor="middle">验证状态</text>
+  <path class="ln-b" d="M443 96 L424 138" style="stroke-dasharray:4 3" marker-end="url(#ar-b)"/>
+  <text class="sm" x="380" y="198" text-anchor="middle">操作完成后，检查状态</text>
+  <text class="sm" x="380" y="216" text-anchor="middle">可以是 SUT、协作者，</text>
+  <text class="sm" x="380" y="234" text-anchor="middle">或数据库、文件系统的状态</text>
+
+  <rect class="bx-a" x="510" y="16" width="236" height="240" rx="12"/>
+  <text class="ttl on-a" x="628" y="42" text-anchor="middle">③ 基于通信</text>
+  <rect class="bx" x="552" y="110" width="100" height="56" rx="10"/><text class="lbl" x="602" y="143" text-anchor="middle">生产代码</text>
+  <path class="ln" d="M520 138 H548" marker-end="url(#ar)"/>
+  <rect class="bx-d" x="686" y="100" width="50" height="30" rx="6"/><text class="sm" x="711" y="120" text-anchor="middle">Mock</text>
+  <rect class="bx-d" x="686" y="146" width="50" height="30" rx="6"/><text class="sm" x="711" y="166" text-anchor="middle">Mock</text>
+  <path class="ln-a" d="M654 128 L682 118" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M654 148 L682 158" marker-end="url(#ar-a)"/>
+  <rect class="bx" x="606" y="60" width="130" height="28" rx="14"/><text class="sm" x="671" y="79" text-anchor="middle">验证调用是否正确</text>
+  <path class="ln-a" d="M668 90 V120" style="stroke-dasharray:4 3"/>
+  <text class="sm" x="628" y="198" text-anchor="middle">把协作者换成 Mock，</text>
+  <text class="sm" x="628" y="216" text-anchor="middle">检查 SUT 调用它们的方式</text>
+</svg>
+<figcaption>图 6-1　三种风格验证的东西不同：返回值、状态、调用。一个测试里可以混用</figcaption>
+</figure>
+
+<h3>① 基于输出</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class PriceEngine {
+    public BigDecimal calculateDiscount(Product... products) {
+        BigDecimal discount = new BigDecimal("0.01").multiply(BigDecimal.valueOf(products.length));
+        return discount.min(new BigDecimal("0.20"));
+    }
+}
+
+@Test
+void discount_of_two_products() {
+    var product1 = new Product("Hand wash");
+    var product2 = new Product("Shampoo");
+    var sut = new PriceEngine();
+
+    BigDecimal discount = sut.calculateDiscount(product1, product2);
+
+    assertThat(discount).isEqualByComparingTo("0.02");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+from decimal import Decimal
+
+
+class PriceEngine:
+    def calculate_discount(self, *products: Product) -&gt; Decimal:
+        discount = Decimal("0.01") * len(products)
+        return min(discount, Decimal("0.20"))
+
+
+def test_discount_of_two_products():
+    product1 = Product("Hand wash")
+    product2 = Product("Shampoo")
+    sut = PriceEngine()
+
+    discount = sut.calculate_discount(product1, product2)
+
+    assert discount == Decimal("0.02")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class PriceEngine {
+  calculateDiscount(...products: Product[]): number {
+    const discount = products.length * 0.01
+    return Math.min(discount, 0.2)
+  }
+}
+
+test('discount of two products', () =&gt; {
+  const product1 = new Product('Hand wash')
+  const product2 = new Product('Shampoo')
+  const sut = new PriceEngine()
+
+  const discount = sut.calculateDiscount(product1, product2)
+
+  expect(discount).toBeCloseTo(0.02)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 6.1 · 仓库 <code>code/Book/Chapter6/Listing1/PriceEngine.cs</code></p>
+
+<p>
+  每件商品 1% 的折扣，最多 20%。这个类没把商品存进任何集合，也没写数据库。
+  <code>calculateDiscount()</code> 唯一的结果就是它返回的那个数。
+</p>
+
+<h3>② 基于状态</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class Order {
+    private final List&lt;Product&gt; products = new ArrayList&lt;&gt;();
+
+    public List&lt;Product&gt; getProducts() { return List.copyOf(products); }
+
+    public void addProduct(Product product) {
+        products.add(product);
+    }
+}
+
+@Test
+void adding_a_product_to_an_order() {
+    var product = new Product("Hand wash");
+    var sut = new Order();
+
+    sut.addProduct(product);
+
+    assertThat(sut.getProducts()).containsExactly(product);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class Order:
+    def __init__(self) -&gt; None:
+        self._products: list[Product] = []
+
+    @property
+    def products(self) -&gt; tuple[Product, ...]:
+        return tuple(self._products)
+
+    def add_product(self, product: Product) -&gt; None:
+        self._products.append(product)
+
+
+def test_adding_a_product_to_an_order():
+    product = Product("Hand wash")
+    sut = Order()
+
+    sut.add_product(product)
+
+    assert sut.products == (product,)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class Order {
+  private _products: Product[] = []
+
+  get products(): readonly Product[] { return [...this._products] }
+
+  addProduct(product: Product): void {
+    this._products.push(product)
+  }
+}
+
+test('adding a product to an order', () =&gt; {
+  const product = new Product('Hand wash')
+  const sut = new Order()
+
+  sut.addProduct(product)
+
+  expect(sut.products).toEqual([product])
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 6.2 · 仓库 <code>code/Book/Chapter6/Listing2/PriceEngine.cs</code></p>
+
+<p><code>addProduct()</code> 没有返回值，它的结果是<strong>订单状态的改变</strong>，所以测试去检查 <code>products</code> 集合。</p>
+
+<h3>③ 基于通信</h3>
+
+<p>就是第 5 章那个发问候邮件的测试：用 Mock 替换 <code>IEmailGateway</code>，然后验证 <code>sendGreetingsEmail</code> 被正确调用了。</p>
+
+<div class="box note">
+  <div class="t">&#9432; 风格与学派</div>
+  <p>
+    经典学派偏好<strong>基于状态</strong>胜过基于通信；伦敦学派正好相反。两派<strong>都使用</strong>基于输出的测试。
+  </p>
+</div>
+
+<h2 id="compare">用四大支柱比较三种风格</h2>
+
+<h3>防止回归、快速反馈：差别不大</h3>
+
+<p>
+  <strong>防止回归</strong>取决于执行的代码量、复杂度和业务重要性，和风格无关 —— 哪种风格都能写出覆盖多或少的测试。
+  唯一要小心的是基于通信的风格：滥用时会写出只验证薄薄一层、其余全部 Mock 掉的「浅」测试。但这是滥用的问题，不是风格固有的。
+</p>
+<p>
+  <strong>快速反馈</strong>也差不多。只要不碰进程外依赖，三种风格的速度基本一样。Mock 在运行时会有一点额外开销，除非你有几万个测试，否则可以忽略。
+</p>
+
+<h3>抵抗重构：输出最好，通信最差</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="测试与生产代码耦合的面积：基于输出的测试只耦合被测方法；基于状态的测试还耦合了类的状态；基于通信的测试还耦合了对协作者的调用。耦合面越大越容易碰到实现细节">
+  <text class="ttl on-g" x="130" y="24" text-anchor="middle">基于输出</text>
+  <rect class="bx" x="40" y="40" width="180" height="110" rx="10"/>
+  <rect class="bx-g" x="56" y="56" width="148" height="30" rx="6"/><text class="sm on-g" x="130" y="76" text-anchor="middle">被测方法（签名）</text>
+  <rect class="bx-d" x="56" y="94" width="148" height="20" rx="5"/>
+  <rect class="bx-d" x="56" y="120" width="148" height="20" rx="5"/>
+  <text class="sm" x="130" y="172" text-anchor="middle">只和方法本身耦合</text>
+  <text class="sm on-g" x="130" y="190" text-anchor="middle">耦合面最小</text>
+
+  <text class="ttl on-b" x="380" y="24" text-anchor="middle">基于状态</text>
+  <rect class="bx" x="290" y="40" width="180" height="110" rx="10"/>
+  <rect class="bx-b" x="306" y="56" width="148" height="30" rx="6"/><text class="sm on-b" x="380" y="76" text-anchor="middle">被测方法</text>
+  <rect class="bx-b" x="306" y="94" width="148" height="20" rx="5"/><text class="sm on-b" x="380" y="109" text-anchor="middle">类的状态</text>
+  <rect class="bx-d" x="306" y="120" width="148" height="20" rx="5"/>
+  <text class="sm" x="380" y="172" text-anchor="middle">还要读类的状态</text>
+  <text class="sm on-b" x="380" y="190" text-anchor="middle">碰到泄漏细节的概率更高</text>
+
+  <text class="ttl on-a" x="630" y="24" text-anchor="middle">基于通信</text>
+  <rect class="bx" x="540" y="40" width="180" height="110" rx="10"/>
+  <rect class="bx-a" x="556" y="56" width="148" height="30" rx="6"/><text class="sm on-a" x="630" y="76" text-anchor="middle">被测方法</text>
+  <rect class="bx-a" x="556" y="94" width="148" height="46" rx="5"/><text class="sm on-a" x="630" y="114" text-anchor="middle">对每个替身的</text><text class="sm on-a" x="630" y="130" text-anchor="middle">调用方式和参数</text>
+  <text class="sm" x="630" y="172" text-anchor="middle">最容易误报</text>
+  <text class="sm on-a" x="630" y="190" text-anchor="middle">只有跨边界的调用才安全</text>
+</svg>
+<figcaption>图 6-2　彩色部分是测试「知道」的东西。知道得越多，越可能绑到实现细节上</figcaption>
+</figure>
+
+<p>
+  要说明的是，脆弱并不是基于通信风格的<em>必然</em>特征 —— 只要保持好封装、只验证可观察行为，误报可以降到最低。
+  区别在于<strong>需要付出多少小心</strong>：基于输出几乎不用操心，另外两种要时刻留神。
+</p>
+
+<h3>可维护性：差别最大，而且没法弥补</h3>
+
+<p>可维护性 = 读懂测试有多难（取决于测试大小）+ 运行测试有多难（取决于进程外依赖）。</p>
+
+<p><strong>基于输出</strong>：只做两件事 —— 给输入、验输出，通常几行代码就完事。被测代码不改状态，也就不涉及进程外依赖。两项都是最好的。</p>
+
+<p><strong>基于状态</strong>：验证状态通常比验证输出占更多篇幅。看这个例子，断言部分就有四行：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+@Test
+void adding_a_comment_to_an_article() {
+    var sut = new Article();
+    var text = "Comment text";
+    var author = "John Doe";
+    var now = LocalDateTime.of(2019, 4, 1, 0, 0);
+
+    sut.addComment(text, author, now);
+
+    assertThat(sut.getComments()).hasSize(1);                           // 验证文章的状态
+    assertThat(sut.getComments().get(0).getText()).isEqualTo(text);
+    assertThat(sut.getComments().get(0).getAuthor()).isEqualTo(author);
+    assertThat(sut.getComments().get(0).getDateCreated()).isEqualTo(now);
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+def test_adding_a_comment_to_an_article():
+    sut = Article()
+    text = "Comment text"
+    author = "John Doe"
+    now = datetime(2019, 4, 1)
+
+    sut.add_comment(text, author, now)
+
+    assert len(sut.comments) == 1                   # 验证文章的状态
+    assert sut.comments[0].text == text
+    assert sut.comments[0].author == author
+    assert sut.comments[0].date_created == now
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+test('adding a comment to an article', () =&gt; {
+  const sut = new Article()
+  const text = 'Comment text'
+  const author = 'John Doe'
+  const now = new Date(2019, 3, 1)
+
+  sut.addComment(text, author, now)
+
+  expect(sut.comments).toHaveLength(1)                  // 验证文章的状态
+  expect(sut.comments[0].text).toBe(text)
+  expect(sut.comments[0].author).toBe(author)
+  expect(sut.comments[0].dateCreated).toEqual(now)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 6.4 · 仓库 <code>code/Book/Chapter6/Listing4_6/Listing4.cs</code></p>
+
+<p>有两种缓解办法，但都只是偶尔适用：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// 办法一：断言辅助方法（要花精力写和维护，只有被多个测试复用时才值得）
+assertThatArticle(sut)
+    .hasNumberOfComments(1)
+    .withComment(text, author, now);
+
+// 办法二：把 Comment 做成值对象（record 自带按值比较），整体比较
+var comment = new Comment("Comment text", "John Doe", LocalDateTime.of(2019, 4, 1, 0, 0));
+
+sut.addComment(comment.text(), comment.author(), comment.dateCreated());
+
+assertThat(sut.getComments()).containsExactly(comment);
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# 办法一：断言辅助函数（要花精力写和维护，只有被多个测试复用时才值得）
+assert_article(sut).has_number_of_comments(1).with_comment(text, author, now)
+
+# 办法二：把 Comment 做成值对象（dataclass 自带按值比较），整体比较
+comment = Comment("Comment text", "John Doe", datetime(2019, 4, 1))
+
+sut.add_comment(comment.text, comment.author, comment.date_created)
+
+assert sut.comments == [comment]
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// 办法一：断言辅助函数（要花精力写和维护，只有被多个测试复用时才值得）
+expectArticle(sut).toHaveNumberOfComments(1).withComment(text, author, now)
+
+// 办法二：把 Comment 当成值来整体比较（toEqual 按结构深比较）
+const comment = { text: 'Comment text', author: 'John Doe', dateCreated: new Date(2019, 3, 1) }
+
+sut.addComment(comment.text, comment.author, comment.dateCreated)
+
+expect(sut.comments).toEqual([comment])
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 6.5 / 6.6</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 办法二不能乱用</div>
+  <p>
+    只有当这个类<strong>本质上就是一个值</strong>时，才适合把它改成值对象。否则你就是为了简化测试而往生产代码里塞东西 ——
+    这叫<strong>代码污染</strong>，是第 11 章要讲的反模式。
+  </p>
+</div>
+
+<p>
+  <strong>基于通信</strong>：最差。要设置替身、要写交互断言，都很占地方。如果出现 <strong>Mock 链</strong>
+  （Mock 返回另一个 Mock，它又返回 Mock，套好几层），测试会更大、更难维护。
+</p>
+
+<h3>比较结果</h3>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>基于输出</th><th>基于状态</th><th>基于通信</th></tr>
+  <tr><td><strong>为保持抵抗重构需要付出的小心</strong></td><td style="color:var(--green);font-weight:700">低</td><td>中</td><td>中</td></tr>
+  <tr><td><strong>维护成本</strong></td><td style="color:var(--green);font-weight:700">低</td><td>中</td><td style="color:var(--red);font-weight:700">高</td></tr>
+</table>
+</div>
+
+<div class="box key">
+  <div class="t">&#9733; 结论：永远优先选择基于输出的测试</div>
+  <p>
+    问题是，这种风格<strong>只适用于以函数式方式编写的代码</strong>，而在面向对象语言里这种代码不多。
+    好在有办法把更多的代码改造成这样 —— 这就是本章后半部分的内容。
+  </p>
+</div>
+
+<h2 id="fp">理解函数式架构</h2>
+
+<h3>什么是函数式编程</h3>
+
+<p>
+  函数式编程就是<strong>用数学函数来编程</strong>。数学函数（也叫<strong>纯函数</strong>）是没有任何<strong>隐藏的输入或输出</strong>的函数：
+  所有输入和输出都明明白白写在方法签名（方法名、参数、返回类型）里。给它同样的输入，不管调用多少次，都得到同样的输出。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="数学函数把一个集合中的每个元素映射到另一个集合中的唯一一个元素。左边是 f(x)=x+1，右边是 calculateDiscount">
+  <text class="ttl" x="190" y="22" text-anchor="middle">f(x) = x + 1</text>
+  <ellipse class="bx-b" cx="90" cy="134" rx="56" ry="96"/>
+  <ellipse class="bx-g" cx="290" cy="134" rx="56" ry="96"/>
+  <text class="sm on-b" x="90" y="246" text-anchor="middle">输入 X</text>
+  <text class="sm on-g" x="290" y="246" text-anchor="middle">输出 Y</text>
+  <text class="mono" x="90" y="76" text-anchor="middle">1</text><text class="mono" x="290" y="76" text-anchor="middle">2</text>
+  <text class="mono" x="90" y="116" text-anchor="middle">2</text><text class="mono" x="290" y="116" text-anchor="middle">3</text>
+  <text class="mono" x="90" y="156" text-anchor="middle">3</text><text class="mono" x="290" y="156" text-anchor="middle">4</text>
+  <text class="mono" x="90" y="196" text-anchor="middle">4</text><text class="mono" x="290" y="196" text-anchor="middle">5</text>
+  <path class="ln" d="M104 72 H274" marker-end="url(#ar)"/>
+  <path class="ln" d="M104 112 H274" marker-end="url(#ar)"/>
+  <path class="ln" d="M104 152 H274" marker-end="url(#ar)"/>
+  <path class="ln" d="M104 192 H274" marker-end="url(#ar)"/>
+
+  <text class="ttl" x="580" y="22" text-anchor="middle">calculateDiscount()</text>
+  <ellipse class="bx-b" cx="480" cy="134" rx="84" ry="96"/>
+  <ellipse class="bx-g" cx="690" cy="134" rx="50" ry="96"/>
+  <text class="sm on-b" x="480" y="246" text-anchor="middle">商品数组</text>
+  <text class="sm on-g" x="690" y="246" text-anchor="middle">折扣</text>
+  <text class="sm" x="480" y="92" text-anchor="middle">[洗手液, 洗发水]</text>
+  <text class="mono" x="690" y="96" text-anchor="middle">0.02</text>
+  <text class="sm" x="480" y="150" text-anchor="middle">[香皂]</text>
+  <text class="mono" x="690" y="154" text-anchor="middle">0.01</text>
+  <text class="sm" x="480" y="186" text-anchor="middle">[海盐]</text>
+  <path class="ln" d="M534 88 H656" marker-end="url(#ar)"/>
+  <path class="ln" d="M506 146 H656" marker-end="url(#ar)"/>
+  <path class="ln" d="M506 182 L656 156" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 6-3　数学上的函数：对第一个集合里的每个元素，在第二个集合里找到<strong>恰好一个</strong>对应元素</figcaption>
+</figure>
+
+<p>
+  显式的输入输出让纯函数<strong>极其好测</strong>：测试短小、简单、好读。纯函数是唯一能用基于输出风格来测的代码。
+  反过来，隐藏的输入输出让代码难测，也难读。隐藏的输入输出有三种：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="方法签名上明示的输入和输出之外，还可能有隐藏的部分：引用内部或外部状态是隐藏输入；副作用和异常是隐藏输出">
+  <rect class="bx-g" x="20" y="20" width="720" height="92" rx="12"/>
+  <text class="sm on-g" x="36" y="40">方法签名里写明的（显式）</text>
+  <rect class="bx" x="60" y="52" width="130" height="44" rx="8"/><text class="lbl" x="125" y="79" text-anchor="middle">参数（输入）</text>
+  <rect class="bx-a" x="320" y="52" width="120" height="44" rx="22"/><text class="ttl on-a" x="380" y="79" text-anchor="middle">f</text>
+  <rect class="bx" x="570" y="52" width="130" height="44" rx="8"/><text class="lbl" x="635" y="79" text-anchor="middle">返回值（输出）</text>
+  <path class="ln-g" d="M192 74 H316" marker-end="url(#ar-g)"/>
+  <path class="ln-g" d="M442 74 H566" marker-end="url(#ar-g)"/>
+
+  <rect class="bx-r" x="20" y="128" width="720" height="106" rx="12"/>
+  <text class="sm on-r" x="36" y="148">签名里看不出来的（隐藏）</text>
+  <rect class="bx" x="40" y="160" width="210" height="60" rx="8"/>
+  <text class="lbl on-r" x="145" y="184" text-anchor="middle">隐藏输入：引用状态</text>
+  <text class="sm" x="145" y="204" text-anchor="middle">读当前时间、查数据库、读可变字段</text>
+  <rect class="bx" x="290" y="160" width="200" height="60" rx="8"/>
+  <text class="lbl on-r" x="390" y="184" text-anchor="middle">隐藏输出：副作用</text>
+  <text class="sm" x="390" y="204" text-anchor="middle">改对象状态、写文件</text>
+  <rect class="bx" x="530" y="160" width="190" height="60" rx="8"/>
+  <text class="lbl on-r" x="625" y="184" text-anchor="middle">隐藏输出：异常</text>
+  <text class="sm" x="625" y="204" text-anchor="middle">绕过了签名约定的返回路径</text>
+  <path class="ln-r" d="M210 158 L330 98" marker-end="url(#ar-r)" style="stroke-dasharray:5 4"/>
+  <path class="ln-r" d="M380 98 V156" marker-end="url(#ar-r)" style="stroke-dasharray:5 4"/>
+  <path class="ln-r" d="M430 98 L570 158" marker-end="url(#ar-r)" style="stroke-dasharray:5 4"/>
+</svg>
+<figcaption>图 6-4　三种隐藏的输入输出。有任何一种，方法就不再是纯函数</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#128161; 判断是不是纯函数：引用透明</div>
+  <p>
+    看能不能<strong>把对这个方法的调用直接换成它的返回值</strong>，而程序行为不变。能换，就是纯函数。
+  </p>
+</div>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+// ✓ 纯函数：increment(4) 和 5 可以互相替换
+public int increment(int x) {
+    return x + 1;
+}
+
+// ✗ 不是纯函数：返回值没有体现它的全部输出，x 被改了（副作用）
+int x = 0;
+public int increment() {
+    x++;
+    return x;
+}
+
+// ✗ 看着像纯函数，其实不是：除了返回 Comment，还偷偷改了内部状态
+public Comment addComment(String text) {
+    var comment = new Comment(text);
+    comments.add(comment);        // 副作用
+    return comment;
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+# ✓ 纯函数：increment(4) 和 5 可以互相替换
+def increment(x: int) -&gt; int:
+    return x + 1
+
+
+# ✗ 不是纯函数：返回值没有体现它的全部输出，x 被改了（副作用）
+x = 0
+
+def increment_global() -&gt; int:
+    global x
+    x += 1
+    return x
+
+
+# ✗ 看着像纯函数，其实不是：除了返回 Comment，还偷偷改了内部状态
+def add_comment(self, text: str) -&gt; Comment:
+    comment = Comment(text)
+    self._comments.append(comment)    # 副作用
+    return comment
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+// ✓ 纯函数：increment(4) 和 5 可以互相替换
+function increment(x: number): number {
+  return x + 1
+}
+
+// ✗ 不是纯函数：返回值没有体现它的全部输出，x 被改了（副作用）
+let x = 0
+function incrementGlobal(): number {
+  x++
+  return x
+}
+
+// ✗ 看着像纯函数，其实不是：除了返回 Comment，还偷偷改了内部状态
+addComment(text: string): Comment {
+  const comment = new Comment(text)
+  this.comments.push(comment)       // 副作用
+  return comment
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 6.7</p>
+
+<h3>什么是函数式架构</h3>
+
+<p>
+  完全没有副作用的应用是不存在的 —— 更新用户信息、往购物车加一行，这些副作用正是你写应用的目的。
+  函数式编程的目标不是消灭副作用，而是<strong>把处理业务逻辑的代码和产生副作用的代码分开</strong>。
+  两件事各自已经够复杂了，混在一起复杂度会成倍增长。
+</p>
+
+<div class="term">
+  <b class="w">函数式架构（functional architecture）</b>
+  <p>把副作用<strong>推到业务操作的边缘</strong>，让以纯函数（不可变）方式编写的代码尽可能多，处理副作用的代码尽可能少。</p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="函数式架构：可变外壳收集输入交给函数式核心，核心做出决定并返回，外壳再把决定转化为副作用">
+  <rect class="bx-b" x="20" y="20" width="330" height="230" rx="16"/>
+  <text class="ttl on-b" x="185" y="46" text-anchor="middle">可变外壳（mutable shell）</text>
+  <text class="sm" x="185" y="232" text-anchor="middle">根据决定去「动手」：读写数据库、文件、发消息</text>
+  <rect class="bx-a" x="80" y="70" width="210" height="130" rx="14"/>
+  <text class="ttl on-a" x="185" y="110" text-anchor="middle">函数式核心</text>
+  <text class="lbl" x="185" y="132" text-anchor="middle">（functional core）</text>
+  <text class="sm" x="185" y="158" text-anchor="middle">只「做决定」，全是纯函数</text>
+  <text class="sm" x="185" y="176" text-anchor="middle">不碰任何外部东西</text>
+  <path class="ln" d="M30 120 H76" marker-end="url(#ar)"/>
+  <text class="sm" x="52" y="110" text-anchor="middle">输入</text>
+  <path class="ln-a" d="M292 150 H340" marker-end="url(#ar-a)"/>
+  <text class="sm on-a" x="317" y="140" text-anchor="middle">决定</text>
+
+  <rect class="bx" x="400" y="20" width="340" height="62" rx="10"/>
+  <text class="ttl on-b" x="416" y="44">① 外壳收集所有输入</text>
+  <text class="sm" x="416" y="64">从数据库、文件里把需要的数据都读出来</text>
+  <path class="ln" d="M570 84 V100" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="400" y="104" width="340" height="62" rx="10"/>
+  <text class="ttl on-a" x="416" y="128">② 核心生成决定</text>
+  <text class="sm" x="416" y="148">纯计算，返回一个「该做什么」的值</text>
+  <path class="ln" d="M570 168 V184" marker-end="url(#ar)"/>
+  <rect class="bx" x="400" y="188" width="340" height="62" rx="10"/>
+  <text class="ttl on-b" x="416" y="212">③ 外壳把决定变成副作用</text>
+  <text class="sm" x="416" y="232">不再做任何判断 —— 外壳越「笨」越好</text>
+</svg>
+<figcaption>图 6-5　函数式核心 + 可变外壳。目标是：用大量基于输出的测试覆盖核心，外壳只留给少量集成测试</figcaption>
+</figure>
+
+<div class="box deep">
+  <div class="t">&#128300; 封装与不可变性</div>
+  <p>
+    封装通过「缩小能改数据的 API 面积、并严格把关剩下的 API」来保护不变量。
+    不可变性从另一个角度解决同一个问题：<strong>不能被改变的东西，根本不可能被弄坏</strong>。
+    你只需要在创建对象时校验一次，之后可以放心地到处传递。
+  </p>
+  <p>
+    Michael Feathers 有句名言：<em>「面向对象编程通过<strong>封装</strong>活动部件来让代码易于理解；
+    函数式编程通过<strong>减少</strong>活动部件来让代码易于理解。」</em>
+  </p>
+</div>
+
+<h3>函数式架构 vs. 六边形架构</h3>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>六边形架构</th><th>函数式架构</th></tr>
+  <tr><td><strong>核心思想</strong></td><td colspan="2">关注点分离（两者相同）</td></tr>
+  <tr><td><strong>两层</strong></td><td>领域层 + 应用服务层</td><td>函数式核心 + 可变外壳</td></tr>
+  <tr><td><strong>依赖方向</strong></td><td colspan="2">单向：外层依赖内层，内层不依赖外层（两者相同）</td></tr>
+  <tr><td><strong>对副作用的态度</strong></td><td>领域层<strong>可以有</strong>副作用，只要不越出领域层（比如领域对象可以改自己的状态，但不能直接写数据库）</td><td>核心<strong>完全没有</strong>副作用，全部推到外壳</td></tr>
+</table>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 一句话</div>
+  <p>函数式架构是六边形架构的一个子集 —— 可以把它看成<strong>推到极致的六边形架构</strong>。</p>
+</div>
+
+<h2 id="audit">实战：把审计系统改造成函数式架构</h2>
+
+<p>
+  示例项目是一个<strong>访客审计系统</strong>，用纯文本文件记录每位访客的姓名和到访时间。
+  新记录追加到最新的文件末尾；一个文件的条数达到上限后，就新建一个序号加一的文件。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 170" role="img" aria-label="审计系统的存储结构：audit_1.txt 已经写满三条记录，新记录写入新建的 audit_2.txt">
+  <rect class="bx" x="40" y="20" width="300" height="130" rx="10"/>
+  <text class="ttl" x="56" y="44">audit_1.txt</text>
+  <text class="sm" x="324" y="44" text-anchor="end">已满（上限 3 条）</text>
+  <text class="mono" x="56" y="74">Peter; 2019-04-06T16:30:00</text>
+  <text class="mono" x="56" y="98">Jane;  2019-04-06T16:40:00</text>
+  <text class="mono" x="56" y="122">Jack;  2019-04-06T17:00:00</text>
+
+  <rect class="bx-g" x="420" y="20" width="300" height="130" rx="10"/>
+  <text class="ttl on-g" x="436" y="44">audit_2.txt</text>
+  <text class="sm" x="704" y="44" text-anchor="end">当前文件</text>
+  <text class="mono" x="436" y="74">Mary;  2019-04-06T17:30:00</text>
+  <text class="mono on-g" x="436" y="98">新访客; 到访时间   ← 追加在这里</text>
+  <path class="ln" d="M342 85 H416" marker-end="url(#ar)"/>
+  <text class="sm" x="380" y="76" text-anchor="middle">满了就</text>
+  <text class="sm" x="380" y="104" text-anchor="middle">开新文件</text>
+</svg>
+<figcaption>图 6-6　审计系统的文件结构</figcaption>
+</figure>
+
+<h3>第 0 版：直接读写文件系统</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class AuditManager {
+    private final int maxEntriesPerFile;
+    private final Path directory;
+
+    public AuditManager(int maxEntriesPerFile, Path directory) {
+        this.maxEntriesPerFile = maxEntriesPerFile;
+        this.directory = directory;
+    }
+
+    public void addRecord(String visitorName, LocalDateTime timeOfVisit) throws IOException {
+        List&lt;Path&gt; sorted;
+        try (var paths = Files.list(directory)) {
+            sorted = sortByIndex(paths.toList());
+        }
+        String newRecord = visitorName + ";" + timeOfVisit.format(ISO_LOCAL_DATE_TIME);
+
+        if (sorted.isEmpty()) {
+            Files.writeString(directory.resolve("audit_1.txt"), newRecord);
+            return;
+        }
+
+        Path currentFile = sorted.get(sorted.size() - 1);
+        List&lt;String&gt; lines = new ArrayList&lt;&gt;(Files.readAllLines(currentFile));
+
+        if (lines.size() &lt; maxEntriesPerFile) {
+            lines.add(newRecord);
+            Files.writeString(currentFile, String.join("\r\n", lines));
+        } else {
+            int newIndex = indexOf(currentFile) + 1;
+            Files.writeString(directory.resolve("audit_" + newIndex + ".txt"), newRecord);
+        }
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+from datetime import datetime
+from pathlib import Path
+
+
+class AuditManager:
+    def __init__(self, max_entries_per_file: int, directory: Path) -&gt; None:
+        self._max_entries_per_file = max_entries_per_file
+        self._directory = directory
+
+    def add_record(self, visitor_name: str, time_of_visit: datetime) -&gt; None:
+        sorted_files = sort_by_index(list(self._directory.iterdir()))
+        new_record = f"{visitor_name};{time_of_visit.isoformat()}"
+
+        if not sorted_files:
+            (self._directory / "audit_1.txt").write_text(new_record)
+            return
+
+        current_file = sorted_files[-1]
+        lines = current_file.read_text().splitlines()
+
+        if len(lines) &lt; self._max_entries_per_file:
+            lines.append(new_record)
+            current_file.write_text("\r\n".join(lines))
+        else:
+            new_index = index_of(current_file) + 1
+            (self._directory / f"audit_{new_index}.txt").write_text(new_record)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+
+export class AuditManager {
+  constructor(
+    private readonly maxEntriesPerFile: number,
+    private readonly directory: string,
+  ) {}
+
+  addRecord(visitorName: string, timeOfVisit: Date): void {
+    const sorted = sortByIndex(fs.readdirSync(this.directory))
+    const newRecord = `${visitorName};${formatTime(timeOfVisit)}`
+
+    if (sorted.length === 0) {
+      fs.writeFileSync(path.join(this.directory, 'audit_1.txt'), newRecord)
+      return
+    }
+
+    const currentFile = sorted[sorted.length - 1]
+    const currentPath = path.join(this.directory, currentFile)
+    const lines = fs.readFileSync(currentPath, 'utf8').split(/\r?\n/)
+
+    if (lines.length &lt; this.maxEntriesPerFile) {
+      lines.push(newRecord)
+      fs.writeFileSync(currentPath, lines.join('\r\n'))
+    } else {
+      const newIndex = indexOf(currentFile) + 1
+      fs.writeFileSync(path.join(this.directory, `audit_${newIndex}.txt`), newRecord)
+    }
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 6.8 · 仓库 <code>code/Book/Chapter6/Listing7_/Before/ArchitectureBefore.cs</code></p>
+
+<p>
+  逻辑并不复杂，但它<strong>和文件系统紧紧绑在一起</strong>，很难测：测试前要把文件摆到正确的位置，测试后要读出来检查，再清理掉。
+  文件系统是共享依赖，测试没法并行；它也让测试变慢；你还得保证工作目录在本机和构建服务器上都存在且可访问。
+</p>
+
+<h3>第 1 版：用 Mock 把测试和文件系统解耦</h3>
+
+<p>常规解法：把所有文件操作抽成一个接口，通过构造函数注入 <code>AuditManager</code>，测试时 Mock 这个接口。</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public interface IFileSystem {
+    List&lt;String&gt; getFiles(String directoryName);
+    void writeAllText(String filePath, String content);
+    List&lt;String&gt; readAllLines(String filePath);
+}
+
+@Test
+void a_new_file_is_created_when_the_current_file_overflows() {
+    IFileSystem fileSystemMock = mock(IFileSystem.class);
+    when(fileSystemMock.getFiles("audits"))
+        .thenReturn(List.of("audits/audit_1.txt", "audits/audit_2.txt"));
+    when(fileSystemMock.readAllLines("audits/audit_2.txt"))
+        .thenReturn(List.of(
+            "Peter; 2019-04-06T16:30:00",
+            "Jane; 2019-04-06T16:40:00",
+            "Jack; 2019-04-06T17:00:00"));
+    var sut = new AuditManager(3, "audits", fileSystemMock);
+
+    sut.addRecord("Alice", LocalDateTime.parse("2019-04-06T18:00:00"));
+
+    verify(fileSystemMock).writeAllText(
+        "audits/audit_3.txt", "Alice;2019-04-06T18:00:00");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class FileSystem(Protocol):
+    def get_files(self, directory_name: str) -&gt; list[str]: ...
+    def write_all_text(self, file_path: str, content: str) -&gt; None: ...
+    def read_all_lines(self, file_path: str) -&gt; list[str]: ...
+
+
+def test_a_new_file_is_created_when_the_current_file_overflows():
+    file_system_mock = Mock(spec=FileSystem)
+    file_system_mock.get_files.return_value = [
+        "audits/audit_1.txt", "audits/audit_2.txt"]
+    file_system_mock.read_all_lines.return_value = [
+        "Peter; 2019-04-06T16:30:00",
+        "Jane; 2019-04-06T16:40:00",
+        "Jack; 2019-04-06T17:00:00",
+    ]
+    sut = AuditManager(3, "audits", file_system_mock)
+
+    sut.add_record("Alice", datetime.fromisoformat("2019-04-06T18:00:00"))
+
+    file_system_mock.write_all_text.assert_called_once_with(
+        "audits/audit_3.txt", "Alice;2019-04-06T18:00:00")
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export interface IFileSystem {
+  getFiles(directoryName: string): string[]
+  writeAllText(filePath: string, content: string): void
+  readAllLines(filePath: string): string[]
+}
+
+test('a new file is created when the current file overflows', () =&gt; {
+  const fileSystemMock: IFileSystem = {
+    getFiles: vi.fn().mockReturnValue(['audits/audit_1.txt', 'audits/audit_2.txt']),
+    readAllLines: vi.fn().mockReturnValue([
+      'Peter; 2019-04-06T16:30:00',
+      'Jane; 2019-04-06T16:40:00',
+      'Jack; 2019-04-06T17:00:00',
+    ]),
+    writeAllText: vi.fn(),
+  }
+  const sut = new AuditManager(3, 'audits', fileSystemMock)
+
+  sut.addRecord('Alice', new Date('2019-04-06T18:00:00Z'))
+
+  expect(fileSystemMock.writeAllText).toHaveBeenCalledWith(
+    'audits/audit_3.txt', 'Alice;2019-04-06T18:00:00')
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 6.9–6.11 · 仓库 <code>code/Book/Chapter6/Listing7_/Mocks/ArchitectureMocks.cs</code></p>
+
+<div class="box note">
+  <div class="t">&#9432; 这里用 Mock 合理吗？</div>
+  <p>
+    合理。应用创建的文件是<strong>最终用户看得见的</strong>（他们会用别的程序，哪怕是记事本，去读这些文件）。
+    所以与文件系统的通信及其副作用属于应用的可观察行为 —— 正是第 5 章说的 Mock 的唯一合理用途。
+  </p>
+</div>
+
+<p>
+  比第 0 版好多了：测试不碰文件系统，跑得快，也不用照看工作目录。但还能更好 ——
+  这个测试的准备部分很绕，Mock 库再怎么努力，也不如朴素的输入输出好读。
+</p>
+
+<h3>第 2 版：重构为函数式架构</h3>
+
+<p>
+  与其把副作用藏在接口后面再注入进来，不如<strong>把副作用整个移出这个类</strong>。
+  <code>AuditManager</code> 只负责<strong>决定</strong>该对文件做什么；新的 <code>Persister</code> 类根据这个决定去动文件系统。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="函数式核心：AuditManager"><pre>
+// 核心需要知道的关于文件系统的一切
+public record FileContent(String fileName, List&lt;String&gt; lines) {}
+
+// 核心做出的决定：「把这个文件的内容改成这样」
+public record FileUpdate(String fileName, String newContent) {}
+
+public class AuditManager {
+    private final int maxEntriesPerFile;
+
+    public AuditManager(int maxEntriesPerFile) {
+        this.maxEntriesPerFile = maxEntriesPerFile;
+    }
+
+    public FileUpdate addRecord(
+            List&lt;FileContent&gt; files, String visitorName, LocalDateTime timeOfVisit) {
+        List&lt;FileContent&gt; sorted = sortByIndex(files);
+        String newRecord = visitorName + ";" + timeOfVisit.format(ISO_LOCAL_DATE_TIME);
+
+        if (sorted.isEmpty()) {
+            return new FileUpdate("audit_1.txt", newRecord);          // 返回一条更新指令
+        }
+
+        FileContent currentFile = sorted.get(sorted.size() - 1);
+
+        if (currentFile.lines().size() &lt; maxEntriesPerFile) {
+            var lines = new ArrayList&lt;&gt;(currentFile.lines());
+            lines.add(newRecord);
+            return new FileUpdate(currentFile.fileName(), String.join("\r\n", lines));
+        }
+
+        int newIndex = indexOf(currentFile.fileName()) + 1;
+        return new FileUpdate("audit_" + newIndex + ".txt", newRecord);
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="函数式核心：AuditManager"><pre>
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class FileContent:
+    """核心需要知道的关于文件系统的一切"""
+    file_name: str
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FileUpdate:
+    """核心做出的决定：「把这个文件的内容改成这样」"""
+    file_name: str
+    new_content: str
+
+
+class AuditManager:
+    def __init__(self, max_entries_per_file: int) -&gt; None:
+        self._max_entries_per_file = max_entries_per_file
+
+    def add_record(self, files: list[FileContent], visitor_name: str,
+                   time_of_visit: datetime) -&gt; FileUpdate:
+        sorted_files = sort_by_index(files)
+        new_record = f"{visitor_name};{time_of_visit.isoformat()}"
+
+        if not sorted_files:
+            return FileUpdate("audit_1.txt", new_record)      # 返回一条更新指令
+
+        current_file = sorted_files[-1]
+
+        if len(current_file.lines) &lt; self._max_entries_per_file:
+            lines = [*current_file.lines, new_record]
+            return FileUpdate(current_file.file_name, "\r\n".join(lines))
+
+        new_index = index_of(current_file.file_name) + 1
+        return FileUpdate(f"audit_{new_index}.txt", new_record)
+</pre></div>
+<div class="code" data-lang="ts" data-file="函数式核心：AuditManager"><pre>
+/** 核心需要知道的关于文件系统的一切 */
+export interface FileContent {
+  readonly fileName: string
+  readonly lines: readonly string[]
+}
+
+/** 核心做出的决定：「把这个文件的内容改成这样」 */
+export interface FileUpdate {
+  readonly fileName: string
+  readonly newContent: string
+}
+
+export class AuditManager {
+  constructor(private readonly maxEntriesPerFile: number) {}
+
+  addRecord(files: FileContent[], visitorName: string, timeOfVisit: Date): FileUpdate {
+    const sorted = sortByIndex(files)
+    const newRecord = `${visitorName};${formatTime(timeOfVisit)}`
+
+    if (sorted.length === 0) {
+      return { fileName: 'audit_1.txt', newContent: newRecord }   // 返回一条更新指令
+    }
+
+    const currentFile = sorted[sorted.length - 1]
+
+    if (currentFile.lines.length &lt; this.maxEntriesPerFile) {
+      const lines = [...currentFile.lines, newRecord]
+      return { fileName: currentFile.fileName, newContent: lines.join('\r\n') }
+    }
+
+    const newIndex = indexOf(currentFile.fileName) + 1
+    return { fileName: `audit_${newIndex}.txt`, newContent: newRecord }
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 6.12 · 仓库 <code>code/Book/Chapter6/Listing7_/Functional/ArchitectureFunctional.cs</code></p>
+
+<p>可变外壳 <code>Persister</code> 和把两者粘在一起的应用服务：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="可变外壳：Persister + ApplicationService"><pre>
+public class Persister {
+    public List&lt;FileContent&gt; readDirectory(Path directory) throws IOException {
+        try (var paths = Files.list(directory)) {
+            var result = new ArrayList&lt;FileContent&gt;();
+            for (Path p : paths.toList()) {
+                result.add(new FileContent(p.getFileName().toString(), Files.readAllLines(p)));
+            }
+            return result;
+        }
+    }
+
+    public void applyUpdate(Path directory, FileUpdate update) throws IOException {
+        Files.writeString(directory.resolve(update.fileName()), update.newContent());
+    }
+}
+
+public class ApplicationService {
+    private final Path directory;
+    private final AuditManager auditManager;
+    private final Persister persister = new Persister();
+
+    public ApplicationService(Path directory, int maxEntriesPerFile) {
+        this.directory = directory;
+        this.auditManager = new AuditManager(maxEntriesPerFile);
+    }
+
+    public void addRecord(String visitorName, LocalDateTime timeOfVisit) throws IOException {
+        List&lt;FileContent&gt; files = persister.readDirectory(directory);              // ① 收集输入
+        FileUpdate update = auditManager.addRecord(files, visitorName, timeOfVisit); // ② 做决定
+        persister.applyUpdate(directory, update);                                   // ③ 执行决定
+    }
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="可变外壳：Persister + ApplicationService"><pre>
+class Persister:
+    def read_directory(self, directory: Path) -&gt; list[FileContent]:
+        return [
+            FileContent(p.name, tuple(p.read_text().splitlines()))
+            for p in directory.iterdir()
+        ]
+
+    def apply_update(self, directory: Path, update: FileUpdate) -&gt; None:
+        (directory / update.file_name).write_text(update.new_content)
+
+
+class ApplicationService:
+    def __init__(self, directory: Path, max_entries_per_file: int) -&gt; None:
+        self._directory = directory
+        self._audit_manager = AuditManager(max_entries_per_file)
+        self._persister = Persister()
+
+    def add_record(self, visitor_name: str, time_of_visit: datetime) -&gt; None:
+        files = self._persister.read_directory(self._directory)        # ① 收集输入
+        update = self._audit_manager.add_record(                       # ② 做决定
+            files, visitor_name, time_of_visit)
+        self._persister.apply_update(self._directory, update)          # ③ 执行决定
+</pre></div>
+<div class="code" data-lang="ts" data-file="可变外壳：Persister + ApplicationService"><pre>
+export class Persister {
+  readDirectory(directory: string): FileContent[] {
+    return fs.readdirSync(directory).map((fileName) =&gt; ({
+      fileName,
+      lines: fs.readFileSync(path.join(directory, fileName), 'utf8').split(/\r?\n/),
+    }))
+  }
+
+  applyUpdate(directory: string, update: FileUpdate): void {
+    fs.writeFileSync(path.join(directory, update.fileName), update.newContent)
+  }
+}
+
+export class ApplicationService {
+  private readonly auditManager: AuditManager
+  private readonly persister = new Persister()
+
+  constructor(private readonly directory: string, maxEntriesPerFile: number) {
+    this.auditManager = new AuditManager(maxEntriesPerFile)
+  }
+
+  addRecord(visitorName: string, timeOfVisit: Date): void {
+    const files = this.persister.readDirectory(this.directory)                  // ① 收集输入
+    const update = this.auditManager.addRecord(files, visitorName, timeOfVisit) // ② 做决定
+    this.persister.applyUpdate(this.directory, update)                          // ③ 执行决定
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 6.13 / 6.14</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="外部客户端调用应用服务；应用服务先让 Persister 读目录，把文件内容交给 AuditManager 做决定，再让 Persister 应用更新">
+  <rect class="bx" x="300" y="12" width="160" height="34" rx="8"/><text class="lbl" x="380" y="34" text-anchor="middle">外部客户端</text>
+  <path class="ln" d="M380 48 V66" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="40" y="70" width="680" height="160" rx="14"/>
+  <text class="ttl on-b" x="56" y="94">ApplicationService（应用服务）</text>
+
+  <rect class="bx" x="64" y="120" width="170" height="84" rx="10"/>
+  <text class="ttl" x="149" y="146" text-anchor="middle">Persister</text>
+  <text class="sm" x="149" y="166" text-anchor="middle">readDirectory()</text>
+  <text class="sm on-b" x="149" y="188" text-anchor="middle">① 读（可变外壳）</text>
+
+  <rect class="bx-a" x="295" y="120" width="170" height="84" rx="10"/>
+  <text class="ttl on-a" x="380" y="146" text-anchor="middle">AuditManager</text>
+  <text class="sm" x="380" y="166" text-anchor="middle">addRecord()</text>
+  <text class="sm on-a" x="380" y="188" text-anchor="middle">② 决定（函数式核心）</text>
+
+  <rect class="bx" x="526" y="120" width="170" height="84" rx="10"/>
+  <text class="ttl" x="611" y="146" text-anchor="middle">Persister</text>
+  <text class="sm" x="611" y="166" text-anchor="middle">applyUpdate()</text>
+  <text class="sm on-b" x="611" y="188" text-anchor="middle">③ 写（可变外壳）</text>
+
+  <path class="ln" d="M236 162 H291" marker-end="url(#ar)"/>
+  <text class="mono sm" x="263" y="112" text-anchor="middle">FileContent[]</text>
+  <path class="ln-a" d="M467 162 H522" marker-end="url(#ar-a)"/>
+  <text class="mono sm" x="495" y="112" text-anchor="middle">FileUpdate</text>
+</svg>
+<figcaption>图 6-7　读 &rarr; 决定 &rarr; 写。按六边形架构的说法，ApplicationService 和 Persister 属于应用服务层，AuditManager 属于领域模型</figcaption>
+</figure>
+
+<p>
+  注意 <code>Persister</code> 有多简单：它<strong>没有任何分支</strong>（没有 <code>if</code>），只是读目录、写文件。所有复杂度都在 <code>AuditManager</code> 里。
+  要保持这种分离，<code>FileContent</code> 和 <code>FileUpdate</code> 的结构应该尽量贴近语言自带的文件操作 —— 所有解析和准备工作都放在核心里做，外壳才能保持简单。
+</p>
+
+<p>现在测试变成了这样 —— 只有朴素的输入和输出：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✓ 基于输出的测试，没有 Mock"><pre>
+@Test
+void a_new_file_is_created_when_the_current_file_overflows() {
+    var sut = new AuditManager(3);
+    var files = List.of(
+        new FileContent("audit_1.txt", List.of()),
+        new FileContent("audit_2.txt", List.of(
+            "Peter; 2019-04-06T16:30:00",
+            "Jane; 2019-04-06T16:40:00",
+            "Jack; 2019-04-06T17:00:00")));
+
+    FileUpdate update = sut.addRecord(
+        files, "Alice", LocalDateTime.parse("2019-04-06T18:00:00"));
+
+    // FileUpdate 是 record（值对象），可以整体比较
+    assertThat(update).isEqualTo(
+        new FileUpdate("audit_3.txt", "Alice;2019-04-06T18:00:00"));
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✓ 基于输出的测试，没有 Mock"><pre>
+def test_a_new_file_is_created_when_the_current_file_overflows():
+    sut = AuditManager(3)
+    files = [
+        FileContent("audit_1.txt", ()),
+        FileContent("audit_2.txt", (
+            "Peter; 2019-04-06T16:30:00",
+            "Jane; 2019-04-06T16:40:00",
+            "Jack; 2019-04-06T17:00:00",
+        )),
+    ]
+
+    update = sut.add_record(
+        files, "Alice", datetime.fromisoformat("2019-04-06T18:00:00"))
+
+    # FileUpdate 是 frozen dataclass（值对象），可以整体比较
+    assert update == FileUpdate("audit_3.txt", "Alice;2019-04-06T18:00:00")
+</pre></div>
+<div class="code" data-lang="ts" data-file="✓ 基于输出的测试，没有 Mock"><pre>
+test('a new file is created when the current file overflows', () =&gt; {
+  const sut = new AuditManager(3)
+  const files: FileContent[] = [
+    { fileName: 'audit_1.txt', lines: [] },
+    {
+      fileName: 'audit_2.txt',
+      lines: [
+        'Peter; 2019-04-06T16:30:00',
+        'Jane; 2019-04-06T16:40:00',
+        'Jack; 2019-04-06T17:00:00',
+      ],
+    },
+  ]
+
+  const update = sut.addRecord(files, 'Alice', new Date('2019-04-06T18:00:00Z'))
+
+  // FileUpdate 是普通的值，toEqual 可以整体比较
+  expect(update).toEqual({ fileName: 'audit_3.txt', newContent: 'Alice;2019-04-06T18:00:00' })
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 6.15</p>
+
+<h3>三个版本的对比</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="三个版本的测试方式对比：第零版测试必须通过真实文件系统准备输入和检查结果；第一版用 Mock 替换文件系统；第二版测试直接给函数式核心传值并检查返回值">
+  <rect class="bx" x="14" y="14" width="732" height="92" rx="10"/>
+  <text class="ttl" x="28" y="38">第 0 版：直接读写文件</text>
+  <rect class="bx" x="230" y="46" width="90" height="40" rx="8"/><text class="lbl" x="275" y="71" text-anchor="middle">测试</text>
+  <rect class="bx-r" x="370" y="46" width="110" height="40" rx="8"/><text class="lbl on-r" x="425" y="71" text-anchor="middle">真实文件系统</text>
+  <rect class="bx" x="530" y="46" width="100" height="40" rx="8"/><text class="lbl" x="580" y="71" text-anchor="middle">审计系统</text>
+  <path class="ln" d="M322 66 H366" marker-end="url(#ar)" marker-start="url(#ar)"/>
+  <path class="ln" d="M482 66 H526" marker-end="url(#ar)" marker-start="url(#ar)"/>
+  <text class="sm" x="28" y="62">测试要先摆好文件，</text>
+  <text class="sm" x="28" y="78">跑完再读出来检查并清理</text>
+  <text class="sm on-r" x="690" y="62" text-anchor="middle">慢</text>
+  <text class="sm on-r" x="690" y="78" text-anchor="middle">难维护</text>
+
+  <rect class="bx" x="14" y="118" width="732" height="92" rx="10"/>
+  <text class="ttl" x="28" y="142">第 1 版：Mock 文件系统</text>
+  <rect class="bx" x="230" y="150" width="90" height="40" rx="8"/><text class="lbl" x="275" y="175" text-anchor="middle">测试</text>
+  <rect class="bx-d" x="370" y="150" width="110" height="40" rx="8"/><text class="lbl" x="425" y="175" text-anchor="middle">IFileSystem 替身</text>
+  <rect class="bx" x="530" y="150" width="100" height="40" rx="8"/><text class="lbl" x="580" y="175" text-anchor="middle">审计系统</text>
+  <path class="ln" d="M322 170 H366" marker-end="url(#ar)"/>
+  <path class="ln" d="M526 170 H484" marker-end="url(#ar)"/>
+  <text class="sm" x="28" y="166">测试配置 stub 的返回值，</text>
+  <text class="sm" x="28" y="182">再验证 mock 收到的写调用</text>
+  <text class="sm on-g" x="690" y="166" text-anchor="middle">快</text>
+  <text class="sm on-a" x="690" y="182" text-anchor="middle">准备很绕</text>
+
+  <rect class="bx-g" x="14" y="222" width="732" height="92" rx="10"/>
+  <text class="ttl on-g" x="28" y="246">第 2 版：函数式架构</text>
+  <rect class="bx" x="230" y="254" width="90" height="40" rx="8"/><text class="lbl" x="275" y="279" text-anchor="middle">测试</text>
+  <rect class="bx-a" x="440" y="254" width="190" height="40" rx="8"/><text class="lbl on-a" x="535" y="279" text-anchor="middle">AuditManager（纯函数）</text>
+  <path class="ln-g" d="M322 266 H436" marker-end="url(#ar-g)"/>
+  <path class="ln-g" d="M436 284 H324" marker-end="url(#ar-g)"/>
+  <text class="mono sm" x="380" y="260" text-anchor="middle">FileContent[]</text>
+  <text class="mono sm" x="380" y="304" text-anchor="middle">FileUpdate</text>
+  <text class="sm" x="28" y="270">传入假想的目录状态，</text>
+  <text class="sm" x="28" y="286">检查返回的决定</text>
+  <text class="sm on-g" x="690" y="270" text-anchor="middle">快</text>
+  <text class="sm on-g" x="690" y="286" text-anchor="middle">简洁好读</text>
+</svg>
+<figcaption>图 6-8　同一个行为，三种测试方式</figcaption>
+</figure>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>第 0 版：直接读写</th><th>第 1 版：用 Mock</th><th>第 2 版：基于输出</th></tr>
+  <tr><td><strong>防止回归</strong></td><td>好</td><td>好</td><td>好</td></tr>
+  <tr><td><strong>抵抗重构</strong></td><td>好</td><td>好</td><td>好</td></tr>
+  <tr><td><strong>快速反馈</strong></td><td style="color:var(--red);font-weight:700">差</td><td style="color:var(--green);font-weight:700">好</td><td style="color:var(--green);font-weight:700">好</td></tr>
+  <tr><td><strong>可维护性</strong></td><td style="color:var(--red);font-weight:700">差</td><td>中</td><td style="color:var(--green);font-weight:700">好</td></tr>
+</table>
+</div>
+
+<h3>往后还能怎么发展</h3>
+
+<p>函数式架构在需求增长时也很好扩展：</p>
+<ul>
+  <li><strong>删除某位访客的所有记录</strong>可能涉及多个文件 &rarr; 让方法返回多条指令（<code>FileUpdate[]</code>）。</li>
+  <li><strong>不保留空文件</strong> &rarr; 把 <code>FileUpdate</code> 改名为 <code>FileAction</code>，加一个类型字段区分「更新」还是「删除」。</li>
+  <li><strong>错误处理</strong>变得更简单、更显式 &rarr; 把错误放进返回值（比如返回 <code>(FileUpdate, Error)</code>）。应用服务检查到有错误，就不把指令交给 <code>Persister</code>，而是把错误信息返回给用户。</li>
+</ul>
+
+<h2 id="drawbacks">函数式架构的代价</h2>
+
+<h3>适用性：不是所有流程都能「先读完再决定」</h3>
+
+<p>
+  审计系统之所以能用函数式架构，是因为它可以在做决定<strong>之前</strong>就把所有输入收集齐。但实际流程常常没这么直接：
+  你可能需要根据决策过程中的<strong>中间结果</strong>，再去进程外依赖查额外的数据。
+</p>
+
+<p>
+  举个例子：如果访客过去 24 小时内的到访次数超过某个阈值，就要去数据库查他的访问级别。
+  你<strong>不能</strong>把数据库对象直接传给 <code>AuditManager</code> —— 那会引入隐藏输入，它就不再是纯函数，也就不能用基于输出的方式测试了。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="两种解决方案：一是应用服务预先把访问级别也查出来，牺牲性能保持分离；二是核心增加一个是否需要查询的判断方法，由应用服务据此决定是否查库，牺牲一点分离换取性能">
+  <rect class="bx" x="20" y="16" width="350" height="198" rx="12"/>
+  <text class="ttl" x="36" y="42">方案一：预先全部查好</text>
+  <text class="lbl" x="36" y="68">应用服务在一开始就把访问级别</text>
+  <text class="lbl" x="36" y="88">和目录内容一起读出来，传给核心</text>
+  <rect class="bx-g" x="36" y="106" width="318" height="40" rx="8"/>
+  <text class="sm on-g" x="46" y="124">&#10003; 业务逻辑与外部通信的分离完好无损</text>
+  <text class="sm" x="46" y="140">所有决策仍然在 AuditManager 里</text>
+  <rect class="bx-r" x="36" y="154" width="318" height="46" rx="8"/>
+  <text class="sm on-r" x="46" y="172">&#10007; 牺牲性能</text>
+  <text class="sm" x="46" y="190">不需要访问级别时也无条件查了数据库</text>
+
+  <rect class="bx" x="390" y="16" width="350" height="198" rx="12"/>
+  <text class="ttl" x="406" y="42">方案二：加一个「要不要查」的方法</text>
+  <text class="lbl" x="406" y="68">核心提供 isAccessLevelCheckRequired()，</text>
+  <text class="lbl" x="406" y="88">应用服务先调它，返回 true 才去查库</text>
+  <rect class="bx-g" x="406" y="106" width="318" height="40" rx="8"/>
+  <text class="sm on-g" x="416" y="124">&#10003; 性能更好</text>
+  <text class="sm" x="416" y="140">只在需要时才查数据库</text>
+  <rect class="bx-r" x="406" y="154" width="318" height="46" rx="8"/>
+  <text class="sm on-r" x="416" y="172">&#10007; 让出了一点分离</text>
+  <text class="sm" x="416" y="190">「是否查库」的决定落到了应用服务手里</text>
+</svg>
+<figcaption>图 6-9　中间需要额外查数据时的两种选择。无论选哪个，都比让领域模型直接依赖数据库好</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; 协作者 vs. 值</div>
+  <p>
+    <code>AuditManager</code> 的 <code>addRecord()</code> 用到了 <code>maxEntriesPerFile</code> 字段，它不在方法参数里 —— 这算隐藏输入吗？
+    不算。它在构造函数签名里写明了，而且是不可变的，从创建对象到调用方法之间不会变。它是一个<strong>值</strong>。
+  </p>
+  <p>
+    数据库对象则不同，它是<strong>协作者</strong>：它是通往「尚未在内存里的数据」的代理。
+    <strong>函数式核心里的类不应该和协作者打交道，而应该和协作者的工作成果 —— 值 —— 打交道。</strong>
+  </p>
+</div>
+
+<h3>性能</h3>
+
+<p>
+  受影响的不是测试的性能（基于输出的测试和用 Mock 的测试一样快），而是<strong>系统本身</strong>：
+  为了遵循「读 — 决定 — 写」，它需要对进程外依赖做更多调用。最初版本的审计系统不会读取目录下所有文件的内容，最终版本却要读。
+  这是性能和可维护性之间的取舍，没有通用答案。
+</p>
+
+<h3>代码量</h3>
+
+<p>
+  函数式架构要求核心和外壳清晰分离，前期要多写一些代码（虽然最终会降低复杂度）。
+  不是所有项目都复杂到值得这笔初始投资 —— 业务上不重要、或者本身太简单的代码库，投入永远收不回来。
+  <strong>要有策略地使用函数式架构</strong>，把系统的复杂度和重要性考虑进去。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 不要为了纯粹而纯粹</div>
+  <p>
+    在大多数项目里（尤其是用面向对象语言时），你没法让领域模型完全不可变，也就不可能只靠基于输出的测试。
+    通常是<strong>基于输出和基于状态混着用，再加少量基于通信的测试</strong> —— 这完全没问题。
+  </p>
+  <p>
+    本章的目的不是让你把所有测试都改成基于输出的风格，而是让你把<strong>尽可能多、且合理</strong>的测试改成这种风格。差别很微妙，但很重要。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li><strong>基于输出</strong>：给 SUT 输入，检查它的输出。前提是没有隐藏的输入输出。<strong>基于状态</strong>：操作完成后验证系统状态。<strong>基于通信</strong>：用 Mock 验证 SUT 与协作者的通信。</li>
+  <li>经典学派偏好基于状态，伦敦学派偏好基于通信，两派都用基于输出。</li>
+  <li>基于输出的测试质量最高：很少和实现细节耦合，而且短小简洁、最好维护。</li>
+  <li>基于状态的测试需要额外小心（不要为了测试而暴露私有状态），通常更大、更难维护。辅助方法和值对象能缓解但不能消除这个问题。</li>
+  <li>基于通信的测试也需要额外小心：只验证跨越应用边界、副作用对外可见的通信。它的可维护性最差。</li>
+  <li><strong>纯函数</strong>没有隐藏的输入输出。副作用和异常是隐藏输出；引用内部或外部状态是隐藏输入。</li>
+  <li>函数式编程的目标是把业务逻辑和副作用分开。<strong>函数式架构</strong>通过把副作用推到业务操作的边缘来做到这一点。</li>
+  <li>函数式架构把代码分成两类：<strong>函数式核心</strong>做决定；<strong>可变外壳</strong>提供输入，并把决定转化为副作用。</li>
+  <li>函数式架构是推到极致的六边形架构。区别在于：六边形架构允许领域层内部有副作用，函数式架构则把所有副作用都推出去。</li>
+  <li>函数式架构用性能换可维护性，而且会增加初始代码量。不是所有代码库都值得改造，要有策略地使用。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary><code>calculateShipping(order)</code> 内部调用了 <code>LocalDate.now()</code> 来判断是否周末加价。它是纯函数吗？怎么改？</summary>
+  <p>不是。当前日期是隐藏输入（引用了外部状态）。把日期作为参数传进去：<code>calculateShipping(order, today)</code>，它就变成纯函数，可以用基于输出的测试了。</p>
+</details>
+<details class="quiz">
+  <summary>为什么说可变外壳「越笨越好」？</summary>
+  <p>外壳里的代码只能用较慢、较贵的集成测试来覆盖。如果外壳里没有分支和判断，少量集成测试就够了；所有复杂逻辑都在核心里，可以用又快又便宜的基于输出的测试大量覆盖。</p>
+</details>
+<details class="quiz">
+  <summary>把审计系统第 1 版（Mock）改成第 2 版（函数式）之后，四大支柱里哪一项变好了？</summary>
+  <p>可维护性。测试不再需要复杂的 Mock 设置，只剩朴素的输入和输出，更短、更好读。其他三项保持不变。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>用你熟悉的语言把审计系统的三个版本都实现一遍，每个版本都写「当前文件写满时新建文件」这个测试。亲自感受三种测试的差别。</li>
+    <li>给第 2 版的 <code>AuditManager</code> 补上另外两个测试：目录为空时创建 <code>audit_1.txt</code>；当前文件没满时追加记录。看看每个测试需要几行。</li>
+    <li>实现「删除某位访客的所有记录」：让核心返回一个指令列表，其中既有更新也有删除。外壳需要改多少？</li>
+    <li>在你的项目里找一个既有业务判断、又直接读写数据库的方法。试着把它拆成「读数据 &rarr; 纯函数做决定 &rarr; 写数据」三步。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,928 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 4 章 · 好测试的四大支柱 — 单元测试图解教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="4">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 4 章 · 全书的地基</span>
+<h1>好测试的四大支柱</h1>
+<p class="lede">
+  第 1 章说「要一个一个地评估测试」，但拿什么评估？这一章给你一把尺子：四个属性。
+  有了它，任何一个自动化测试 —— 单元的、集成的、端到端的 —— 你都能说清楚它好在哪、差在哪。
+  后面每一章都在用这把尺子。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>记住四大支柱：<strong>防止回归、抵抗重构、快速反馈、可维护性</strong></li>
+    <li>分清<strong>误报</strong>（假阳性）和<strong>漏报</strong>（假阴性），知道哪根支柱对付哪个</li>
+    <li>理解为什么「理想的测试」不存在，以及该在哪里做取舍</li>
+    <li>用四大支柱解释<strong>测试金字塔</strong>和<strong>黑盒 / 白盒测试</strong></li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="pillars">四大支柱一览</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="四根支柱撑起一个有价值的测试：防止回归、抵抗重构、快速反馈、可维护性">
+  <path d="M60 70 L380 14 L700 70 Z" style="fill:var(--accent-bg);stroke:var(--accent);stroke-width:1.5"/>
+  <text class="ttl on-a" x="380" y="54" text-anchor="middle">一个有价值的测试</text>
+  <rect class="bx-a" x="60" y="70" width="640" height="14" rx="2"/>
+
+  <rect class="bx-r" x="90" y="84" width="120" height="150" rx="4"/>
+  <text class="ttl on-r" x="150" y="112" text-anchor="middle">① 防止回归</text>
+  <text class="sm" x="150" y="138" text-anchor="middle">代码坏了，</text>
+  <text class="sm" x="150" y="154" text-anchor="middle">测试能不能</text>
+  <text class="sm" x="150" y="170" text-anchor="middle">发现？</text>
+  <text class="sm on-r" x="150" y="206" text-anchor="middle">对付：漏报</text>
+
+  <rect class="bx-b" x="244" y="84" width="120" height="150" rx="4"/>
+  <text class="ttl on-b" x="304" y="112" text-anchor="middle">② 抵抗重构</text>
+  <text class="sm" x="304" y="138" text-anchor="middle">代码没坏只是</text>
+  <text class="sm" x="304" y="154" text-anchor="middle">换了写法，测试</text>
+  <text class="sm" x="304" y="170" text-anchor="middle">会不会乱报？</text>
+  <text class="sm on-b" x="304" y="206" text-anchor="middle">对付：误报</text>
+
+  <rect class="bx-g" x="398" y="84" width="120" height="150" rx="4"/>
+  <text class="ttl on-g" x="458" y="112" text-anchor="middle">③ 快速反馈</text>
+  <text class="sm" x="458" y="138" text-anchor="middle">多久能告诉我</text>
+  <text class="sm" x="458" y="154" text-anchor="middle">结果？</text>
+  <text class="sm on-g" x="458" y="206" text-anchor="middle">关乎：执行速度</text>
+
+  <rect class="bx-p" x="552" y="84" width="120" height="150" rx="4"/>
+  <text class="ttl on-p" x="612" y="112" text-anchor="middle">④ 可维护性</text>
+  <text class="sm" x="612" y="138" text-anchor="middle">读懂它、运行它</text>
+  <text class="sm" x="612" y="154" text-anchor="middle">要花多少力气？</text>
+  <text class="sm on-p" x="612" y="206" text-anchor="middle">关乎：维护成本</text>
+
+  <rect class="bx" x="60" y="234" width="640" height="14" rx="2"/>
+  <text class="sm" x="227" y="272" text-anchor="middle">①② 合起来决定测试的「准确度」</text>
+  <path class="ln-d" d="M90 254 H364"/>
+  <text class="sm" x="535" y="272" text-anchor="middle">③④ 决定你愿不愿意、能不能经常跑它</text>
+  <path class="ln-d" d="M398 254 H672"/>
+</svg>
+<figcaption>图 4-1　好测试的四根支柱。少了任何一根，屋顶都会塌</figcaption>
+</figure>
+
+<h2 id="pillar1">支柱一：防止回归</h2>
+
+<p>
+  回归就是 Bug：某次改代码之后，原本好用的功能不好用了。功能越多，新版本弄坏旧功能的机会就越多 ——
+  代码库越大，暴露给潜在 Bug 的面积越大。没有好的回归防护，项目迟早会被越来越多的 Bug 埋掉。
+</p>
+
+<p>一个测试在这项上得分多少，看三样东西：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128207;</span><h4>执行的代码量</h4><p>测试跑过的代码越多，发现回归的机会越大（当然前提是有对应的断言，不是光执行）。</p></div>
+  <div class="card"><span class="ic">&#129513;</span><h4>代码的复杂度</h4><p>复杂的业务逻辑比样板代码更容易出错，也就更值得保护。</p></div>
+  <div class="card"><span class="ic">&#128176;</span><h4>代码的业务重要性</h4><p>业务关键功能出 Bug 损失最大。</p></div>
+</div>
+
+<p>
+  反过来，测<strong>琐碎代码</strong>几乎没有意义。比如一个只有一行的属性读写 —— 它太简单了，几乎没有出错的余地，
+  测它也就几乎不可能发现回归。
+</p>
+
+<div class="box tip">
+  <div class="t">&#128161; 别忘了不是你写的代码</div>
+  <p>
+    库、框架、外部系统对软件行为的影响几乎和你自己的代码一样大。要获得最好的防护，
+    测试范围应该把它们也包括进来，以验证你对这些依赖所做的假设是正确的。
+    <strong>想把「防止回归」做到最大，就让测试执行尽可能多的代码。</strong>
+  </p>
+</div>
+
+<h2 id="pillar2">支柱二：抵抗重构</h2>
+
+<div class="term">
+  <b class="w">重构（refactoring）</b>
+  <p>在<strong>不改变可观察行为</strong>的前提下修改现有代码。目的通常是改善非功能特性：更好读、更简单。例如给方法改名、把一段代码抽到新类里。</p>
+</div>
+
+<p>
+  想象这个场景：新功能做完了，一切正常，测试全绿。你决定整理一下代码 —— 这里重构一下，那里调整一下，看起来比之前更好了。
+  只有一个问题：<strong>测试红了</strong>。你仔细查了半天到底哪里弄坏了，结果发现什么都没坏，功能和之前一模一样。
+  是测试写得有问题：只要底层代码有任何改动它就变红，不管功能有没有真的坏。
+</p>
+
+<div class="term">
+  <b class="w">误报 / 假阳性（false positive）</b>
+  <p>一次假警报：测试失败了，但它覆盖的功能其实工作正常。误报通常发生在重构时 —— 你改了实现，但行为没变。
+     一个测试产生的误报越少，它的「抵抗重构」得分越高。</p>
+</div>
+
+<h3>为什么误报这么要命</h3>
+
+<p>测试之所以能支撑项目的可持续增长，靠的是两件事：</p>
+<ul>
+  <li><strong>早期预警</strong>：你一弄坏现有功能，测试马上告诉你，远在代码上生产之前。</li>
+  <li><strong>信心</strong>：你确信自己的改动不会引入回归，所以敢重构。</li>
+</ul>
+<p>误报把这两件事都毁了：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="误报的恶性循环：频繁的假警报让人习惯性忽略失败，然后禁用测试，最终真的 Bug 混进生产环境，团队从此不敢再重构">
+  <rect class="bx-r" x="16" y="30" width="130" height="78" rx="10"/>
+  <text class="ttl on-r" x="81" y="56" text-anchor="middle">测试经常</text>
+  <text class="ttl on-r" x="81" y="74" text-anchor="middle">无缘无故变红</text>
+  <text class="sm" x="81" y="96" text-anchor="middle">「狼来了！」</text>
+
+  <rect class="bx" x="168" y="30" width="130" height="78" rx="10"/>
+  <text class="lbl" x="233" y="58" text-anchor="middle">大家习惯了</text>
+  <text class="lbl" x="233" y="76" text-anchor="middle">「又是误报，</text>
+  <text class="lbl" x="233" y="94" text-anchor="middle">不用管」</text>
+
+  <rect class="bx" x="320" y="30" width="130" height="78" rx="10"/>
+  <text class="lbl" x="385" y="58" text-anchor="middle">失败的测试</text>
+  <text class="lbl" x="385" y="76" text-anchor="middle">被直接禁用</text>
+  <text class="sm" x="385" y="96" text-anchor="middle">「以后再看」</text>
+
+  <rect class="bx-r" x="472" y="30" width="130" height="78" rx="10"/>
+  <text class="ttl on-r" x="537" y="58" text-anchor="middle">真 Bug 混在</text>
+  <text class="ttl on-r" x="537" y="76" text-anchor="middle">误报里被忽略</text>
+  <text class="sm" x="537" y="96" text-anchor="middle">上了生产</text>
+
+  <rect class="bx-a" x="624" y="30" width="120" height="78" rx="10"/>
+  <text class="ttl on-a" x="684" y="58" text-anchor="middle">没人再敢</text>
+  <text class="ttl on-a" x="684" y="76" text-anchor="middle">动旧代码</text>
+  <text class="sm" x="684" y="96" text-anchor="middle">代码继续腐化</text>
+
+  <path class="ln" d="M148 69 H164" marker-end="url(#ar)"/>
+  <path class="ln" d="M300 69 H316" marker-end="url(#ar)"/>
+  <path class="ln" d="M452 69 H468" marker-end="url(#ar)"/>
+  <path class="ln" d="M604 69 H620" marker-end="url(#ar)"/>
+
+  <text class="sm" x="233" y="134" text-anchor="middle">&#9650; 失去了「早期预警」</text>
+  <text class="sm" x="684" y="134" text-anchor="middle">&#9650; 失去了「信心」</text>
+  <text class="lbl" x="380" y="178" text-anchor="middle">这正是原书作者亲历过的一个项目的真实经过</text>
+  <text class="sm" x="380" y="196" text-anchor="middle">正确的应对不是停止重构，而是回过头去降低测试的脆弱性</text>
+</svg>
+<figcaption>图 4-2　「狼来了」效应：误报是怎样一步步废掉一整套测试的</figcaption>
+</figure>
+
+<h3>误报从哪里来</h3>
+
+<div class="box key">
+  <div class="t">&#9733; 本章最重要的一句话</div>
+  <p>
+    一个测试产生多少误报，直接取决于它的结构：<strong>测试和被测系统的实现细节耦合得越紧，误报越多。</strong>
+    减少误报的唯一办法，是把测试和实现细节解耦 —— 让测试验证 SUT 交付的<strong>最终结果</strong>（可观察行为），
+    而不是它为此采取的<strong>步骤</strong>。
+  </p>
+</div>
+
+<p>看一个例子。<code>MessageRenderer</code> 把一条消息（标题、正文、页脚）渲染成 HTML，它内部把工作分给了三个子渲染器：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public record Message(String header, String body, String footer) {}
+
+public interface Renderer {
+    String render(Message message);
+}
+
+public class HeaderRenderer implements Renderer {
+    public String render(Message m) { return "&lt;h1&gt;" + m.header() + "&lt;/h1&gt;"; }
+}
+public class BodyRenderer implements Renderer {
+    public String render(Message m) { return "&lt;b&gt;" + m.body() + "&lt;/b&gt;"; }
+}
+public class FooterRenderer implements Renderer {
+    public String render(Message m) { return "&lt;i&gt;" + m.footer() + "&lt;/i&gt;"; }
+}
+
+public class MessageRenderer implements Renderer {
+    private final List&lt;Renderer&gt; subRenderers = List.of(
+        new HeaderRenderer(), new BodyRenderer(), new FooterRenderer());
+
+    public List&lt;Renderer&gt; getSubRenderers() { return subRenderers; }
+
+    public String render(Message message) {
+        return subRenderers.stream()
+            .map(r -&gt; r.render(message))
+            .collect(Collectors.joining());
+    }
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+from dataclasses import dataclass
+
+
+@dataclass
+class Message:
+    header: str
+    body: str
+    footer: str
+
+
+class HeaderRenderer:
+    def render(self, m: Message) -&gt; str:
+        return f"&lt;h1&gt;{m.header}&lt;/h1&gt;"
+
+
+class BodyRenderer:
+    def render(self, m: Message) -&gt; str:
+        return f"&lt;b&gt;{m.body}&lt;/b&gt;"
+
+
+class FooterRenderer:
+    def render(self, m: Message) -&gt; str:
+        return f"&lt;i&gt;{m.footer}&lt;/i&gt;"
+
+
+class MessageRenderer:
+    def __init__(self) -&gt; None:
+        self.sub_renderers = [HeaderRenderer(), BodyRenderer(), FooterRenderer()]
+
+    def render(self, message: Message) -&gt; str:
+        return "".join(r.render(message) for r in self.sub_renderers)
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export interface Message { header: string; body: string; footer: string }
+
+export interface Renderer {
+  render(message: Message): string
+}
+
+export class HeaderRenderer implements Renderer {
+  render(m: Message) { return `&lt;h1&gt;${m.header}&lt;/h1&gt;` }
+}
+export class BodyRenderer implements Renderer {
+  render(m: Message) { return `&lt;b&gt;${m.body}&lt;/b&gt;` }
+}
+export class FooterRenderer implements Renderer {
+  render(m: Message) { return `&lt;i&gt;${m.footer}&lt;/i&gt;` }
+}
+
+export class MessageRenderer implements Renderer {
+  readonly subRenderers: Renderer[] = [
+    new HeaderRenderer(), new BodyRenderer(), new FooterRenderer(),
+  ]
+
+  render(message: Message): string {
+    return this.subRenderers.map((r) =&gt; r.render(message)).join('')
+  }
+}
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 4.1 · 仓库 <code>code/Book/Chapter4/Listing1/MessageRendererTests.cs</code></p>
+
+<p>怎么测它？一种思路是去检查它的「算法」对不对：</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✗ 脆弱的测试：检查内部结构"><pre>
+@Test
+void messageRenderer_uses_correct_sub_renderers() {
+    var sut = new MessageRenderer();
+
+    List&lt;Renderer&gt; renderers = sut.getSubRenderers();
+
+    assertThat(renderers).hasSize(3);
+    assertThat(renderers.get(0)).isInstanceOf(HeaderRenderer.class);
+    assertThat(renderers.get(1)).isInstanceOf(BodyRenderer.class);
+    assertThat(renderers.get(2)).isInstanceOf(FooterRenderer.class);
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✗ 脆弱的测试：检查内部结构"><pre>
+def test_message_renderer_uses_correct_sub_renderers():
+    sut = MessageRenderer()
+
+    renderers = sut.sub_renderers
+
+    assert len(renderers) == 3
+    assert isinstance(renderers[0], HeaderRenderer)
+    assert isinstance(renderers[1], BodyRenderer)
+    assert isinstance(renderers[2], FooterRenderer)
+</pre></div>
+<div class="code" data-lang="ts" data-file="✗ 脆弱的测试：检查内部结构"><pre>
+test('MessageRenderer uses correct sub renderers', () =&gt; {
+  const sut = new MessageRenderer()
+
+  const renderers = sut.subRenderers
+
+  expect(renderers).toHaveLength(3)
+  expect(renderers[0]).toBeInstanceOf(HeaderRenderer)
+  expect(renderers[1]).toBeInstanceOf(BodyRenderer)
+  expect(renderers[2]).toBeInstanceOf(FooterRenderer)
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 4.2</p>
+
+<p>
+  这个测试检查子渲染器的类型和顺序，并<em>假定</em>这样一来渲染结果也就对了。乍一看不错，但想想：
+</p>
+<ul>
+  <li>把 <code>BodyRenderer</code> 换成一个功能相同的 <code>BoldRenderer</code> —— 输出不变，测试红了。</li>
+  <li>去掉所有子渲染器，直接在 <code>MessageRenderer</code> 里拼字符串 —— 输出不变，测试红了。</li>
+</ul>
+<p>
+  它盯着的是算法，只认一种特定的实现，完全不考虑其他同样正确的实现。这就是<strong>脆弱的测试</strong>。
+</p>
+
+<div class="box deep">
+  <div class="t">&#128300; 最离谱的脆弱测试</div>
+  <p>
+    原书作者见过一个测试：它<strong>读取 <code>MessageRenderer</code> 的源代码文件</strong>，然后和一段写死在测试里的「正确实现」做字符串比较。
+    改一个空格它都会挂。听起来很可笑，但它和上面那个测试<strong>本质上是一回事</strong>：
+    都坚持某一种特定的实现，都不关心 SUT 的可观察行为。区别只是挂得更频繁而已。
+  </p>
+</div>
+
+<h3>瞄准最终结果，而不是实现细节</h3>
+
+<p>
+  问自己一个问题：<strong>你从 <code>MessageRenderer</code> 那里最终得到的是什么？</strong>
+  是消息的 HTML 表示。这是这个类唯一的可观察结果，也是唯一值得检查的东西。只要 HTML 不变，它是怎么生成的根本不重要。
+</p>
+
+<div class="tabs">
+<div class="code" data-lang="java" data-file="✓ 好的测试：只看输出"><pre>
+@Test
+void rendering_a_message() {
+    var sut = new MessageRenderer();
+    var message = new Message("h", "b", "f");
+
+    String html = sut.render(message);
+
+    assertThat(html).isEqualTo("&lt;h1&gt;h&lt;/h1&gt;&lt;b&gt;b&lt;/b&gt;&lt;i&gt;f&lt;/i&gt;");
+}
+</pre></div>
+<div class="code" data-lang="python" data-file="✓ 好的测试：只看输出"><pre>
+def test_rendering_a_message():
+    sut = MessageRenderer()
+    message = Message(header="h", body="b", footer="f")
+
+    html = sut.render(message)
+
+    assert html == "&lt;h1&gt;h&lt;/h1&gt;&lt;b&gt;b&lt;/b&gt;&lt;i&gt;f&lt;/i&gt;"
+</pre></div>
+<div class="code" data-lang="ts" data-file="✓ 好的测试：只看输出"><pre>
+test('rendering a message', () =&gt; {
+  const sut = new MessageRenderer()
+  const message: Message = { header: 'h', body: 'b', footer: 'f' }
+
+  const html = sut.render(message)
+
+  expect(html).toBe('&lt;h1&gt;h&lt;/h1&gt;&lt;b&gt;b&lt;/b&gt;&lt;i&gt;f&lt;/i&gt;')
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 4.4</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="好的测试站在调用方的位置问最终结果对不对；坏的测试伸进被测系统内部问每一步对不对">
+  <rect class="bx-g" x="14" y="16" width="360" height="218" rx="12"/>
+  <text class="ttl on-g" x="30" y="42">&#10003; 好的测试</text>
+  <rect class="bx" x="170" y="58" width="190" height="130" rx="10"/>
+  <text class="sm" x="265" y="76" text-anchor="middle">被测系统（黑盒）</text>
+  <rect class="bx-d" x="186" y="86" width="158" height="24" rx="5"/><text class="sm" x="265" y="103" text-anchor="middle">步骤 1</text>
+  <rect class="bx-d" x="186" y="116" width="158" height="24" rx="5"/><text class="sm" x="265" y="133" text-anchor="middle">步骤 2</text>
+  <rect class="bx-d" x="186" y="146" width="158" height="24" rx="5"/><text class="sm" x="265" y="163" text-anchor="middle">步骤 3</text>
+  <rect class="bx-g" x="30" y="92" width="100" height="56" rx="8"/>
+  <text class="lbl on-g" x="80" y="116" text-anchor="middle">调用方</text>
+  <text class="sm" x="80" y="134" text-anchor="middle">= 测试</text>
+  <path class="ln-g" d="M132 110 H166" marker-end="url(#ar-g)"/>
+  <path class="ln-g" d="M166 132 H134" marker-end="url(#ar-g)"/>
+  <text class="lbl" x="194" y="214" text-anchor="middle">「最终结果对吗？」—— 步骤怎么换都不影响它</text>
+
+  <rect class="bx-r" x="386" y="16" width="360" height="218" rx="12"/>
+  <text class="ttl on-r" x="402" y="42">&#10007; 坏的测试</text>
+  <rect class="bx" x="402" y="58" width="190" height="130" rx="10"/>
+  <text class="sm" x="497" y="76" text-anchor="middle">被测系统</text>
+  <rect class="bx" x="418" y="86" width="158" height="24" rx="5"/><text class="sm" x="497" y="103" text-anchor="middle">步骤 1</text>
+  <rect class="bx" x="418" y="116" width="158" height="24" rx="5"/><text class="sm" x="497" y="133" text-anchor="middle">步骤 2</text>
+  <rect class="bx" x="418" y="146" width="158" height="24" rx="5"/><text class="sm" x="497" y="163" text-anchor="middle">步骤 3</text>
+  <rect class="bx-r" x="640" y="92" width="92" height="56" rx="8"/>
+  <text class="lbl on-r" x="686" y="124" text-anchor="middle">测试</text>
+  <path class="ln-r" d="M638 108 L580 98" marker-end="url(#ar-r)"/>
+  <path class="ln-r" d="M638 120 L580 128" marker-end="url(#ar-r)"/>
+  <path class="ln-r" d="M638 134 L580 158" marker-end="url(#ar-r)"/>
+  <text class="lbl" x="566" y="214" text-anchor="middle">「这些步骤对吗？」—— 换一种实现就挂</text>
+</svg>
+<figcaption>图 4-3　好测试只和可观察行为耦合；坏测试和 SUT 的算法耦合</figcaption>
+</figure>
+
+<p>
+  新测试把 <code>MessageRenderer</code> 当成<strong>黑盒</strong>，只关心它的可观察行为。它验证的是对最终用户唯一有意义的结果 ——
+  消息在浏览器里显示成什么样。这种测试一旦失败，总是切中要害：它在告诉你应用的行为变了，可能会影响客户。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 为什么说「很少误报」而不是「没有误报」</div>
+  <p>
+    比如你给 <code>render()</code> 加了一个参数，测试会编译不过。严格说这也算误报（行为没变，测试却过不了）。
+    但这种误报很好修 —— 跟着编译器的提示改就行。真正难缠的是<strong>不会引起编译错误</strong>的误报：
+    它们看起来像是真 Bug，要花很多时间去排查。
+  </p>
+</div>
+
+<h2 id="accuracy">前两根支柱的内在联系：准确度</h2>
+
+<p>「功能对不对」和「测试过没过」两两组合，一共四种情况：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="二乘二表格：功能正确且测试通过是正确推断；功能坏了而测试通过是漏报；功能正确而测试失败是误报；功能坏了且测试失败是正确推断">
+  <text class="ttl" x="420" y="24" text-anchor="middle">功能实际上是……</text>
+  <text class="ttl" x="290" y="54" text-anchor="middle">正确的</text>
+  <text class="ttl" x="550" y="54" text-anchor="middle">坏掉的</text>
+  <text class="ttl" x="76" y="118" text-anchor="middle">测试通过</text>
+  <text class="sm" x="76" y="136" text-anchor="middle">（绿）</text>
+  <text class="ttl" x="76" y="238" text-anchor="middle">测试失败</text>
+  <text class="sm" x="76" y="256" text-anchor="middle">（红）</text>
+
+  <rect class="bx-g" x="160" y="68" width="260" height="110" rx="10"/>
+  <text class="ttl on-g" x="290" y="106" text-anchor="middle">&#10003; 正确推断</text>
+  <text class="sm" x="290" y="128" text-anchor="middle">真阴性（true negative）</text>
+  <text class="sm" x="290" y="148" text-anchor="middle">没问题，也没报警</text>
+
+  <rect class="bx-r" x="430" y="68" width="260" height="110" rx="10"/>
+  <text class="ttl on-r" x="560" y="100" text-anchor="middle">&#10007; 漏报</text>
+  <text class="sm" x="560" y="122" text-anchor="middle">假阴性（false negative）· 第二类错误</text>
+  <text class="sm" x="560" y="142" text-anchor="middle">有 Bug，测试却没发现</text>
+  <text class="sm on-r" x="560" y="164" text-anchor="middle">&larr; 「防止回归」负责减少它</text>
+
+  <rect class="bx-b" x="160" y="188" width="260" height="110" rx="10"/>
+  <text class="ttl on-b" x="290" y="220" text-anchor="middle">&#10007; 误报</text>
+  <text class="sm" x="290" y="242" text-anchor="middle">假阳性（false positive）· 第一类错误</text>
+  <text class="sm" x="290" y="262" text-anchor="middle">没 Bug，测试却报警</text>
+  <text class="sm on-b" x="290" y="284" text-anchor="middle">&larr; 「抵抗重构」负责减少它</text>
+
+  <rect class="bx-g" x="430" y="188" width="260" height="110" rx="10"/>
+  <text class="ttl on-g" x="560" y="226" text-anchor="middle">&#10003; 正确推断</text>
+  <text class="sm" x="560" y="248" text-anchor="middle">真阳性（true positive）</text>
+  <text class="sm" x="560" y="268" text-anchor="middle">有 Bug，测试抓到了</text>
+
+  <text class="sm" x="380" y="322" text-anchor="middle">两根支柱从相反的两个方向，共同提高测试的准确度</text>
+</svg>
+<figcaption>图 4-4　四种结果。绿色两格是我们想要的，红蓝两格分别由前两根支柱负责消灭</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#128161; 用流感检测来记「阳性 / 阴性」</div>
+  <p>
+    「阳性」听起来像好事，其实是指<strong>检测所针对的那个条件成立了</strong>。流感检测阳性 = 得了流感；测试「阳性」= 测试失败（发现了问题）。
+  </p>
+  <ul>
+    <li><strong>假阳性（误报）</strong>：没得流感，却检测出阳性。&rarr; 代码没坏，测试却红了。</li>
+    <li><strong>假阴性（漏报）</strong>：得了流感，却检测出阴性。&rarr; 代码坏了，测试却是绿的。</li>
+  </ul>
+</div>
+
+<p>也可以用<strong>信噪比</strong>来理解：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 130" role="img" aria-label="测试准确度等于信号除以噪音。信号是发现的 Bug 数量，噪音是发出的假警报数量">
+  <text class="ttl" x="210" y="62" text-anchor="end">测试准确度  =</text>
+  <rect class="bx-r" x="230" y="14" width="300" height="36" rx="8"/>
+  <text class="lbl on-r" x="380" y="37" text-anchor="middle">信号：发现了多少真 Bug（防止回归）</text>
+  <path class="ln" style="stroke-width:2" d="M226 57 H534"/>
+  <rect class="bx-b" x="230" y="64" width="300" height="36" rx="8"/>
+  <text class="lbl on-b" x="380" y="87" text-anchor="middle">噪音：发出了多少假警报（抵抗重构）</text>
+  <text class="sm" x="550" y="37">&uarr; 提高分子</text>
+  <text class="sm" x="550" y="87">&darr; 降低分母</text>
+  <text class="sm" x="380" y="122" text-anchor="middle">两者都至关重要：抓不到 Bug 的测试没用；能抓到所有 Bug 但淹没在噪音里，同样没用</text>
+</svg>
+<figcaption>图 4-5　提高准确度有两条路：增强信号，或减少噪音</figcaption>
+</figure>
+
+<h3>误报和漏报的重要性会随时间变化</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 280" role="img" aria-label="折线图：漏报的影响从项目一开始就很高并保持；误报的影响开始很低，随项目推进逐渐升高到与漏报同等重要">
+  <path class="ln" d="M90 24 V220 H720"/>
+  <text class="sm" x="84" y="30" text-anchor="end">对测试集</text>
+  <text class="sm" x="84" y="44" text-anchor="end">的影响</text>
+  <text class="sm" x="720" y="240" text-anchor="end">项目持续时间 &rarr;</text>
+
+  <path class="ln-r" style="stroke-width:2.4" d="M90 70 H700"/>
+  <text class="ttl on-r" x="110" y="60">漏报（没发现的 Bug）</text>
+  <text class="sm" x="110" y="92">从第一天起就很要紧</text>
+
+  <path class="ln-b" style="stroke-width:2.4" d="M90 200 C300 190 480 110 700 78"/>
+  <text class="ttl on-b" x="470" y="160">误报（假警报）</text>
+  <text class="sm" x="470" y="178">越到后期越要紧</text>
+
+  <rect class="bx-d" x="110" y="104" width="180" height="46" rx="8"/>
+  <text class="sm" x="200" y="123" text-anchor="middle">早期：代码又新又干净，</text>
+  <text class="sm" x="200" y="139" text-anchor="middle">不怎么需要重构</text>
+  <text class="sm" x="380" y="266" text-anchor="middle">代码越来越乱 &rarr; 越来越需要重构 &rarr; 测试能不能「抵抗重构」越来越关键</text>
+</svg>
+<figcaption>图 4-6　多数人只盯着漏报，因为很多项目没活到后期。但中大型项目必须两者并重</figcaption>
+</figure>
+
+<h2 id="pillar34">支柱三和四：快速反馈、可维护性</h2>
+
+<div class="cards">
+  <div class="card">
+    <span class="ic">&#9889;</span><h4>③ 快速反馈</h4>
+    <p>测试越快，测试集里能放的测试越多，你也越愿意经常跑。跑得快，你一弄坏代码它就提醒你，修复成本几乎为零；
+       跑得慢，你就不爱跑，Bug 潜伏的时间变长，朝错误方向浪费的时间也更多。</p>
+  </div>
+  <div class="card">
+    <span class="ic">&#128295;</span><h4>④ 可维护性</h4>
+    <p><strong>读懂它有多难</strong>：和测试的大小有关，代码行数越少越好读（但别为了压行数而牺牲质量 —— 测试代码是一等公民）。<br>
+       <strong>运行它有多难</strong>：如果涉及进程外依赖，你得花时间让它们保持可用：重启数据库、解决网络问题等等。</p>
+  </div>
+</div>
+
+<h2 id="ideal">寻找理想的测试</h2>
+
+<p>四个属性<strong>相乘</strong>，决定一个测试的价值：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 150" role="img" aria-label="测试的价值等于四个属性得分的乘积，任何一项为零则价值为零">
+  <text class="ttl" x="74" y="56" text-anchor="middle">价值  =</text>
+  <rect class="bx-r" x="114" y="30" width="130" height="44" rx="8"/><text class="lbl on-r" x="179" y="50" text-anchor="middle">防止回归</text><text class="mono sm" x="179" y="66" text-anchor="middle">[0..1]</text>
+  <text class="ttl" x="258" y="58" text-anchor="middle">&times;</text>
+  <rect class="bx-b" x="272" y="30" width="130" height="44" rx="8"/><text class="lbl on-b" x="337" y="50" text-anchor="middle">抵抗重构</text><text class="mono sm" x="337" y="66" text-anchor="middle">[0..1]</text>
+  <text class="ttl" x="416" y="58" text-anchor="middle">&times;</text>
+  <rect class="bx-g" x="430" y="30" width="130" height="44" rx="8"/><text class="lbl on-g" x="495" y="50" text-anchor="middle">快速反馈</text><text class="mono sm" x="495" y="66" text-anchor="middle">[0..1]</text>
+  <text class="ttl" x="574" y="58" text-anchor="middle">&times;</text>
+  <rect class="bx-p" x="588" y="30" width="130" height="44" rx="8"/><text class="lbl on-p" x="653" y="50" text-anchor="middle">可维护性</text><text class="mono sm" x="653" y="66" text-anchor="middle">[0..1]</text>
+  <text class="lbl" x="380" y="108" text-anchor="middle">是乘法，不是加法：<tspan font-weight="700">任何一项得 0，整个测试的价值就是 0</tspan></text>
+  <text class="sm" x="380" y="130" text-anchor="middle">这些分数没法精确测量，但可以相当准确地估计。给最低价值设一个较高的门槛，过不了的不要放进测试集</text>
+</svg>
+<figcaption>图 4-7　价值是四个属性的乘积。少量高价值测试，胜过大量平庸的测试</figcaption>
+</figure>
+
+<h3>理想的测试不存在</h3>
+
+<p>
+  理想的测试 = 四项全拿满分。可惜做不到，因为前三项 —— 防止回归、抵抗重构、快速反馈 —— 是<strong>互斥</strong>的：
+  你只能牺牲其中一项，来把另外两项拉满。来看三个「两项拉满、一项归零」的极端例子。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 440" role="img" aria-label="三个相交的圆代表防止回归、抵抗重构、快速反馈。端到端测试在防止回归和抵抗重构的交集；琐碎测试在抵抗重构和快速反馈的交集；脆弱测试在防止回归和快速反馈的交集；三者的交集是达不到的理想测试">
+  <circle class="bx-b" cx="380" cy="130" r="115" style="fill-opacity:.6"/>
+  <circle class="bx-r" cx="310" cy="250" r="115" style="fill-opacity:.6"/>
+  <circle class="bx-g" cx="450" cy="250" r="115" style="fill-opacity:.6"/>
+
+  <text class="ttl on-b" x="380" y="62" text-anchor="middle">抵抗重构</text>
+  <text class="ttl on-r" x="258" y="296" text-anchor="middle">防止回归</text>
+  <text class="ttl on-g" x="502" y="296" text-anchor="middle">快速反馈</text>
+
+  <text class="sm" x="380" y="212" text-anchor="middle" font-weight="700">理想测试</text>
+  <text class="sm" x="380" y="228" text-anchor="middle">（达不到）</text>
+
+  <circle cx="316" cy="180" r="4" fill="var(--fg)"/>
+  <path class="ln" d="M312 180 H204"/>
+  <rect class="bx" x="14" y="140" width="190" height="82" rx="10"/>
+  <text class="ttl" x="26" y="162">极端一：端到端测试</text>
+  <text class="sm" x="26" y="182">跑的代码最多，离实现最远</text>
+  <text class="sm on-r" x="26" y="200">但是：慢</text>
+
+  <circle cx="444" cy="180" r="4" fill="var(--fg)"/>
+  <path class="ln" d="M448 180 H556"/>
+  <rect class="bx" x="556" y="140" width="190" height="82" rx="10"/>
+  <text class="ttl" x="568" y="162">极端二：琐碎测试</text>
+  <text class="sm" x="568" y="182">飞快，也几乎不会误报</text>
+  <text class="sm on-r" x="568" y="200">但是：抓不到任何 Bug</text>
+
+  <circle cx="380" cy="300" r="4" fill="var(--fg)"/>
+  <path class="ln" d="M380 304 V376"/>
+  <rect class="bx" x="255" y="376" width="250" height="56" rx="10"/>
+  <text class="ttl" x="380" y="398" text-anchor="middle">极端三：脆弱测试</text>
+  <text class="sm" x="380" y="418" text-anchor="middle">快，也能抓 Bug <tspan class="on-r">但是：一重构就误报</tspan></text>
+</svg>
+<figcaption>图 4-8　三个属性最多只能同时拉满两个。三个极端各占一个两两相交的区域</figcaption>
+</figure>
+
+<h3>极端一：端到端测试</h3>
+<p>
+  端到端测试从用户视角走过系统的所有组件（UI、数据库、外部应用），执行的代码最多 —— 包括你写的和你没写的 ——
+  所以<strong>防止回归最强</strong>。它也几乎不会误报：正确的重构不改变可观察行为，而端到端测试只看行为，离实现细节最远，所以<strong>抵抗重构也很好</strong>。
+  但它<strong>慢</strong>。只靠端到端测试的系统很难获得快速反馈，这对很多团队是不可接受的。
+</p>
+
+<h3>极端二：琐碎测试</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class User {
+    private String name;
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }   // 这种一行代码几乎不可能有 Bug
+}
+
+@Test
+void test() {
+    var sut = new User();
+
+    sut.setName("John Smith");
+
+    assertThat(sut.getName()).isEqualTo("John Smith");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class User:
+    def __init__(self) -&gt; None:
+        self.name = ""        # 这种一行代码几乎不可能有 Bug
+
+
+def test_name():
+    sut = User()
+
+    sut.name = "John Smith"
+
+    assert sut.name == "John Smith"
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class User {
+  name = ''        // 这种一行代码几乎不可能有 Bug
+}
+
+test('name', () =&gt; {
+  const sut = new User()
+
+  sut.name = 'John Smith'
+
+  expect(sut.name).toBe('John Smith')
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 4.5</p>
+
+<p>
+  跑得飞快，误报的可能也很低。但它几乎不可能发现任何回归，因为被测代码里根本没有出错的空间。
+  琐碎测试的极端形式是<strong>同义反复测试</strong>（tautology test）：它们被设计成永远通过，或者断言毫无意义，等于什么都没测。
+</p>
+
+<h3>极端三：脆弱测试</h3>
+
+<div class="tabs">
+<div class="code" data-lang="java"><pre>
+public class UserRepository {
+    public String lastExecutedSqlStatement;
+
+    public User getById(int id) { /* ... */ }
+}
+
+@Test
+void getById_executes_correct_SQL_code() {
+    var sut = new UserRepository();
+
+    User user = sut.getById(5);
+
+    assertThat(sut.lastExecutedSqlStatement)
+        .isEqualTo("SELECT * FROM dbo.[User] WHERE UserID = 5");
+}
+</pre></div>
+<div class="code" data-lang="python"><pre>
+class UserRepository:
+    last_executed_sql_statement: str = ""
+
+    def get_by_id(self, user_id: int) -&gt; User: ...
+
+
+def test_get_by_id_executes_correct_sql_code():
+    sut = UserRepository()
+
+    user = sut.get_by_id(5)
+
+    assert sut.last_executed_sql_statement == "SELECT * FROM dbo.[User] WHERE UserID = 5"
+</pre></div>
+<div class="code" data-lang="ts"><pre>
+export class UserRepository {
+  lastExecutedSqlStatement = ''
+
+  getById(id: number): User { /* ... */ }
+}
+
+test('getById executes correct SQL code', () =&gt; {
+  const sut = new UserRepository()
+
+  const user = sut.getById(5)
+
+  expect(sut.lastExecutedSqlStatement).toBe('SELECT * FROM dbo.[User] WHERE UserID = 5')
+})
+</pre></div>
+</div>
+<p class="src">对应原书 Listing 4.6</p>
+
+<p>
+  它能抓 Bug 吗？能 —— 如果有人把 <code>UserID</code> 误写成 <code>ID</code>，它会报出来。它跑得也快。
+  但下面这四条 SQL 的结果完全相同，换成任何一条，测试都会变红：
+</p>
+
+<div class="code" data-lang="sql"><pre>
+SELECT * FROM dbo.[User] WHERE UserID = 5
+SELECT * FROM dbo.User WHERE UserID = 5
+SELECT UserID, Name, Email FROM dbo.[User] WHERE UserID = 5
+SELECT * FROM dbo.[User] WHERE UserID = @UserID
+</pre></div>
+
+<p>测试关注的是「<strong>怎么做</strong>」而不是「<strong>做了什么</strong>」，把 SUT 的实现细节固化了下来，堵死了后续重构的路。</p>
+
+<h3>结论：在哪里做取舍</h3>
+
+<p>
+  既然三项不能全拿，是不是每项都让一点？<strong>不是。</strong>
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 抵抗重构没得商量</div>
+  <p>
+    一个测试有没有抵抗重构的能力，基本上是<strong>二元</strong>的：要么有，要么没有，几乎没有中间状态。
+    你没法「只让出一点点」—— 一让就全没了。而防止回归和快速反馈则是连续可调的。
+  </p>
+  <p>
+    所以：<strong>抵抗重构和可维护性尽量拉满</strong>；真正的取舍只发生在<strong>防止回归</strong>和<strong>快速反馈</strong>之间。
+    消灭测试的脆弱性（误报），是通往可靠测试集的第一要务。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="抵抗重构和可维护性应当拉满；防止回归和快速反馈之间是一个滑块，端到端测试偏向防止回归，单元测试偏向快速反馈，集成测试居中">
+  <rect class="bx-b" x="150" y="18" width="210" height="46" rx="10"/>
+  <text class="ttl on-b" x="255" y="46" text-anchor="middle">抵抗重构：拉满 &#9646;&#9646;&#9646;&#9646;&#9646;</text>
+  <rect class="bx-p" x="400" y="18" width="210" height="46" rx="10"/>
+  <text class="ttl on-p" x="505" y="46" text-anchor="middle">可维护性：拉满 &#9646;&#9646;&#9646;&#9646;&#9646;</text>
+
+  <text class="ttl on-r" x="40" y="140" text-anchor="start">防止回归</text>
+  <text class="ttl on-g" x="720" y="140" text-anchor="end">快速反馈</text>
+  <path d="M130 136 H630" style="stroke:var(--line-2);stroke-width:8;stroke-linecap:round"/>
+
+  <circle cx="190" cy="136" r="13" style="fill:var(--red-bg);stroke:var(--red);stroke-width:2"/>
+  <text class="lbl" x="190" y="110" text-anchor="middle">端到端测试</text>
+  <circle cx="380" cy="136" r="13" style="fill:var(--accent-bg);stroke:var(--accent);stroke-width:2"/>
+  <text class="lbl" x="380" y="110" text-anchor="middle">集成测试</text>
+  <circle cx="570" cy="136" r="13" style="fill:var(--green-bg);stroke:var(--green);stroke-width:2"/>
+  <text class="lbl" x="570" y="110" text-anchor="middle">单元测试</text>
+
+  <text class="sm" x="190" y="172" text-anchor="middle">跑的代码最多，最慢</text>
+  <text class="sm" x="380" y="172" text-anchor="middle">居中</text>
+  <text class="sm" x="570" y="172" text-anchor="middle">跑的代码少，最快</text>
+  <text class="lbl" x="380" y="214" text-anchor="middle">滑块往一边多挪一点，另一边就少一点 —— 这才是你真正要做的选择</text>
+</svg>
+<figcaption>图 4-9　前两项拉满之后，剩下的是一个在「防止回归」和「快速反馈」之间滑动的滑块</figcaption>
+</figure>
+
+<div class="box deep">
+  <div class="t">&#128300; 类比：分布式系统的 CAP 定理</div>
+  <p>
+    CAP 定理说，分布式数据存储无法同时保证一致性（C）、可用性（A）、分区容错性（P）三者，最多取其二。
+    相似之处有两点：一是「三选二」；二是其中一项<strong>没得选</strong> —— 大型分布式系统不可能放弃分区容错
+    （数据多到一台机器装不下），所以实际的选择只剩「一致性 vs. 可用性」。
+    测试里那个没得选的，就是抵抗重构。
+  </p>
+</div>
+
+<h2 id="pyramid">用四大支柱解释测试金字塔</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="测试金字塔：底层是数量最多的单元测试，中间是集成测试，顶层是数量最少的端到端测试">
+  <polygon class="bx-r" points="240,30 320,30 373,90 187,90"/>
+  <polygon class="bx-a" points="187,90 373,90 427,150 133,150"/>
+  <polygon class="bx-g" points="133,150 427,150 480,210 80,210"/>
+  <text class="ttl on-r" x="280" y="66" text-anchor="middle">端到端</text>
+  <text class="ttl on-a" x="280" y="126" text-anchor="middle">集成测试</text>
+  <text class="ttl on-g" x="280" y="186" text-anchor="middle">单元测试</text>
+
+  <path class="ln" d="M80 232 H480" marker-end="url(#ar)" marker-start="url(#ar)"/>
+  <text class="sm" x="280" y="252" text-anchor="middle">宽度 = 测试数量</text>
+  <path class="ln" d="M52 210 V34" marker-end="url(#ar)"/>
+  <text class="sm" x="46" y="126" text-anchor="middle" transform="rotate(-90 46 126)">越往上越接近真实用户</text>
+
+  <rect class="bx" x="520" y="30" width="220" height="52" rx="8"/>
+  <text class="lbl" x="532" y="52">偏向<tspan class="on-r" font-weight="700">防止回归</tspan>，牺牲速度</text>
+  <text class="sm" x="532" y="70">只用于最关键的功能</text>
+  <rect class="bx" x="520" y="94" width="220" height="52" rx="8"/>
+  <text class="lbl" x="532" y="116">两者之间</text>
+  <text class="sm" x="532" y="134">验证与进程外依赖的配合</text>
+  <rect class="bx" x="520" y="158" width="220" height="52" rx="8"/>
+  <text class="lbl" x="532" y="180">偏向<tspan class="on-g" font-weight="700">快速反馈</tspan></text>
+  <text class="sm" x="532" y="198">最均衡，所以数量最多</text>
+  <path class="ln-d" d="M378 60 H516 M430 120 H516 M484 184 H516"/>
+  <text class="sm" x="630" y="236" text-anchor="middle">三层都不放弃抵抗重构</text>
+</svg>
+<figcaption>图 4-10　测试金字塔其实就是图 4-9 那个滑块的另一种画法</figcaption>
+</figure>
+
+<p>
+  为什么端到端测试该是少数？还是乘法规则：它在「快速反馈」上得分极低，「可维护性」也差（体积大，还要维护一堆进程外依赖）。
+  所以只有对<strong>最关键的功能</strong>（绝对不能出 Bug 的那种），而且单元测试和集成测试给不了同等防护时，才值得用它。
+</p>
+
+<h3>金字塔的例外</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="两种例外形状：简单的增删改查应用是矩形，单元测试和集成测试数量相当；只有一个数据库依赖的 API 可以有较多的端到端测试">
+  <rect class="bx" x="20" y="16" width="350" height="180" rx="12"/>
+  <text class="ttl" x="36" y="42">例外一：简单的增删改查（CRUD）应用</text>
+  <rect class="bx-a" x="56" y="62" width="130" height="40" rx="4"/><text class="lbl on-a" x="121" y="87" text-anchor="middle">集成测试</text>
+  <rect class="bx-g" x="56" y="102" width="130" height="40" rx="4"/><text class="lbl on-g" x="121" y="127" text-anchor="middle">单元测试</text>
+  <text class="sm" x="200" y="78">没什么业务规则时，</text>
+  <text class="sm" x="200" y="94">单元测试很快沦为琐碎测试；</text>
+  <text class="sm" x="200" y="110">集成测试依然有价值</text>
+  <text class="sm" x="200" y="132">&rarr; 形状像矩形，</text>
+  <text class="sm" x="200" y="148">没有端到端测试</text>
+  <text class="sm" x="36" y="180">极简单的项目里，集成测试甚至可能比单元测试还多</text>
+
+  <rect class="bx" x="390" y="16" width="350" height="180" rx="12"/>
+  <text class="ttl" x="406" y="42">例外二：只连一个数据库的 API</text>
+  <rect class="bx-r" x="426" y="62" width="130" height="40" rx="4"/><text class="lbl on-r" x="491" y="87" text-anchor="middle">端到端测试</text>
+  <rect class="bx-g" x="426" y="102" width="130" height="40" rx="4"/><text class="lbl on-g" x="491" y="127" text-anchor="middle">单元测试</text>
+  <text class="sm" x="570" y="78">没有 UI，端到端也够快；</text>
+  <text class="sm" x="570" y="94">只有一个外部依赖，</text>
+  <text class="sm" x="570" y="110">维护成本也不高</text>
+  <text class="sm" x="570" y="132">&rarr; 端到端测试</text>
+  <text class="sm" x="570" y="148">可以多写一些</text>
+  <text class="sm" x="406" y="180">此时端到端和集成测试几乎没有区别，只是入口不同</text>
+</svg>
+<figcaption>图 4-11　金字塔不是教条。形状由「每种测试在你的项目里能得多少分」决定</figcaption>
+</figure>
+
+<h2 id="blackbox">黑盒测试与白盒测试</h2>
+
+<div class="tw">
+<table>
+  <tr><th></th><th>是什么</th><th>防止回归</th><th>抵抗重构</th></tr>
+  <tr><td><strong>黑盒测试</strong></td><td>不了解内部结构，围绕需求和规格来测：应用<em>应该做什么</em></td><td>较差</td><td style="color:var(--green);font-weight:700">好</td></tr>
+  <tr><td><strong>白盒测试</strong></td><td>验证内部工作方式，测试是从源代码推导出来的：应用<em>是怎么做的</em></td><td style="color:var(--green);font-weight:700">好</td><td>差</td></tr>
+</table>
+</div>
+
+<p>
+  白盒测试更彻底 —— 分析源码能发现很多只看规格发现不了的错误。但它写出来的测试往往很脆弱，和具体实现绑得很紧，
+  而且常常追溯不到任何一条对业务人员有意义的行为。
+</p>
+
+<p>
+  既然抵抗重构没得商量，结论就很清楚了：
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 默认选黑盒</div>
+  <p>
+    让所有测试 —— 单元、集成、端到端 —— 都把系统看成黑盒，验证对问题领域有意义的行为。
+    <strong>如果一个测试追溯不到任何业务需求，这就是它脆弱的迹象</strong>：要么重写，要么删掉。
+    （唯一的例外是算法复杂度很高的工具类代码，见第 7 章。）
+  </p>
+  <p>
+    <strong>写</strong>测试时用黑盒方法；<strong>分析</strong>测试时可以用白盒方法 ——
+    用覆盖率工具看看哪些分支没被执行到，然后转过身来，<em>像完全不了解内部结构那样</em>去为它们写测试。两者结合效果最好。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>好测试有四个基础属性，可用来分析任何自动化测试：<strong>防止回归、抵抗重构、快速反馈、可维护性</strong>。</li>
+  <li><strong>防止回归</strong>衡量测试发现 Bug 的能力。执行的代码越多（包括库和框架的代码），越可能发现 Bug。</li>
+  <li><strong>抵抗重构</strong>衡量测试在代码重构时不产生误报的能力。</li>
+  <li>误报是假警报。它让你对失败麻木，也让你不再信任测试集。</li>
+  <li>误报源于测试与 SUT 的实现细节紧耦合。测试应验证 SUT 产出的<strong>最终结果</strong>，而不是它采取的步骤。</li>
+  <li>前两项共同决定测试的<strong>准确度</strong>：信号强（能发现 Bug）、噪音少（不乱报）。</li>
+  <li>误报在项目初期影响不大，但随着项目增长会变得和漏报一样重要。</li>
+  <li><strong>快速反馈</strong>衡量测试执行得有多快。<strong>可维护性</strong>包括读懂测试的难度和运行测试的难度。</li>
+  <li>测试的价值是四项得分的<strong>乘积</strong>，任何一项为零则价值为零。</li>
+  <li>前三项互斥，最多拉满两项。<strong>抵抗重构不可妥协</strong>（它基本是二元的），取舍发生在防止回归和快速反馈之间。</li>
+  <li>测试金字塔：端到端最少、单元最多、集成居中。不同层在「防止回归 vs. 快速反馈」上做了不同选择。</li>
+  <li>写测试用黑盒方法，分析测试用白盒方法。</li>
+</ul>
+
+<h2 id="quiz">自测</h2>
+
+<details class="quiz">
+  <summary>你把一个私有方法改了名，功能完全没变，结果有 5 个测试红了。这是哪种错误？哪根支柱出了问题？</summary>
+  <p>误报（假阳性，第一类错误）。「抵抗重构」这根支柱出了问题 —— 这些测试和实现细节耦合了。</p>
+</details>
+<details class="quiz">
+  <summary>一个测试在三项上得分 0.9、0.9、0.9，在「抵抗重构」上得分 0。它的价值大约是多少？</summary>
+  <p>0。四项是相乘的关系。它就是一个脆弱测试，每次重构都会制造噪音。</p>
+</details>
+<details class="quiz">
+  <summary>为什么不能把所有测试都写成端到端测试？它在前两根支柱上得分都很高。</summary>
+  <p>因为它在「快速反馈」上得分极低，「可维护性」也差。乘法规则下，这会把总价值拉得很低。只有最关键的功能才值得这个代价。</p>
+</details>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>实现本章的 <code>MessageRenderer</code>，把「脆弱的测试」和「好的测试」都写上。
+        然后做一次重构：把三个子渲染器删掉，直接在 <code>render</code> 里拼字符串。哪个测试红了？它该红吗？</li>
+    <li>从你的项目里随机挑 5 个测试，给每个测试的四项属性各打一个 0–1 的分，算出乘积。有没有接近 0 的？</li>
+    <li>回忆最近一次「测试红了但其实没 Bug」的经历。那个测试是和什么实现细节耦合了？</li>
+    <li>画出你当前项目的测试「形状」：单元 / 集成 / 端到端各有多少？是金字塔、矩形，还是倒金字塔（冰淇淋甜筒）？</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>
